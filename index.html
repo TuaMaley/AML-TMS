@@ -2381,33 +2381,45 @@ async function submitLogin() {
   const err   = $('login-error');
   if(!email||!pass){showErr('Enter email and password');return;}
   if(btn){btn.textContent='Signing in...';btn.disabled=true;}
-  const r = await fetch(API+'/api/auth/login',{method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({email,password:pass})}).then(x=>x.json()).catch(()=>null);
+  let r = null;
+  try {
+    const resp = await fetch(API+'/api/auth/login',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({email,password:pass})});
+    r = await resp.json();
+    // 503 = server still starting up, treat same as network error
+    if(resp.status === 503) r = null;
+  } catch(e) { r = null; }
   if(btn){btn.textContent='Sign in →';btn.disabled=false;}
   if(!r){
-    // Cold start — auto retry with progress bar
     const retryBar = document.getElementById('retry-bar');
     const retryProg = document.getElementById('retry-prog');
     if(retryBar) retryBar.style.display='block';
     showErr('Server warming up — retrying automatically…');
     let elapsed = 0;
-    const interval = setInterval(async ()=>{
+    if(window._retryInterval) clearInterval(window._retryInterval);
+    window._retryInterval = setInterval(async ()=>{
       elapsed += 2;
-      if(retryProg) retryProg.style.width = Math.min(95, elapsed/60*100)+'%';
-      const retry = await fetch(API+'/api/health').catch(()=>null);
-      if(retry) {
-        clearInterval(interval);
-        if(retryBar) retryBar.style.display='none';
-        if(retryProg) retryProg.style.width='0%';
-        submitLogin(); // retry login
-      }
+      if(retryProg) retryProg.style.width = Math.min(95, elapsed/75*100)+'%';
+      try {
+        const hresp = await fetch(API+'/api/health');
+        const hdata = await hresp.json();
+        // Only proceed when server is fully ready (not warming up)
+        if(hresp.ok && hdata.status === 'ok') {
+          clearInterval(window._retryInterval);
+          window._retryInterval = null;
+          if(retryBar) retryBar.style.display='none';
+          if(retryProg) retryProg.style.width='0%';
+          submitLogin();
+        }
+      } catch(e) { /* still starting */ }
       if(elapsed >= 90) {
-        clearInterval(interval);
+        clearInterval(window._retryInterval);
+        window._retryInterval = null;
         if(retryBar) retryBar.style.display='none';
-        showErr('Server unreachable. Please check the deployment URL or try refreshing.');
+        showErr('Server took too long to start. Please refresh and try again.');
       }
-    }, 2000);
+    }, 2500);
     return;
   }
   if(r.requires_2fa){
