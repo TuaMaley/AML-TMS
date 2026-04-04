@@ -1190,7 +1190,7 @@ async function checkHealth() {
 
 checkHealth();
 setInterval(checkHealth, 10000);
-go('dashboard');
+initAuth();
 </script>
 
 <script>
@@ -2255,15 +2255,20 @@ let _userPerms = new Set();
 
 async function initAuth() {
   if (!_authToken) { showLogin(); return; }
+  // Restore session from stored token
   const r = await api('/api/auth/me');
   if (r && r.user) {
     _currentUser = r.user;
     _userPerms   = new Set(r.permissions || []);
     updateUserBadge();
-    // Log page visit
-    await api('/api/auth/log_action', {method:'POST',
-      body: JSON.stringify({action:'APP_OPEN', detail:'Session restored'})});
+    // Show/hide supervisor nav
+    const supNav = document.getElementById('nav-supqueue');
+    if(supNav) supNav.style.display = _userPerms.has('file_sar') ? '' : 'none';
+    if(_userPerms.has('file_sar')) refreshSupQueueBadge();
+    // Navigate to dashboard
+    go('dashboard');
   } else {
+    // Token invalid or expired — show login
     _authToken = null;
     localStorage.removeItem('aml_token');
     showLogin();
@@ -2430,25 +2435,23 @@ async function submitLogin() {
     return;
   }
   if(r.ok){
-    _authToken=r.token;
-    _currentUser=r.user;
-    _userPerms=new Set();
-    localStorage.setItem('aml_token',r.token);
-    const lp=$('login-page');
+    _authToken   = r.token;
+    _currentUser = r.user;
+    // permissions come directly in the login response — no second round-trip needed
+    _userPerms   = new Set(r.permissions || []);
+    localStorage.setItem('aml_token', r.token);
+    // Hide login page, show app
+    const lp = $('login-page');
     if(lp) lp.style.display='none';
     document.querySelector('.app').style.display='flex';
-    const sf=$('api-status');
-    if(sf) sf.innerHTML='Connected';
     updateUserBadge();
-    await api('/api/auth/me').then(d=>{if(d?.permissions)_userPerms=new Set(d.permissions);});
-    // Show supervisor-only nav items
+    // Show/hide supervisor nav
     const supNav = document.getElementById('nav-supqueue');
     if(supNav) supNav.style.display = _userPerms.has('file_sar') ? '' : 'none';
-    // Poll supervisor queue badge
     if(_userPerms.has('file_sar')) refreshSupQueueBadge();
     go('dashboard');
   } else {
-    showErr(r.error||'Login failed');
+    showErr(r.error || 'Login failed');
   }
 }
 
@@ -2459,16 +2462,15 @@ async function submitTfa() {
     headers:{'Content-Type':'application/json'},
     body:JSON.stringify({temp_token:_tfaTempToken,code})}).then(x=>x.json()).catch(()=>null);
   if(r?.ok){
-    _authToken=r.token; _currentUser=r.user; _userPerms=new Set();
-    localStorage.setItem('aml_token',r.token);
+    _authToken   = r.token;
+    _currentUser = r.user;
+    _userPerms   = new Set(r.permissions || []);
+    localStorage.setItem('aml_token', r.token);
     const lp=$('login-page'); if(lp) lp.style.display='none';
     document.querySelector('.app').style.display='flex';
     updateUserBadge();
-    await api('/api/auth/me').then(d=>{if(d?.permissions)_userPerms=new Set(d.permissions);});
-    // Show supervisor-only nav items
     const supNav = document.getElementById('nav-supqueue');
     if(supNav) supNav.style.display = _userPerms.has('file_sar') ? '' : 'none';
-    // Poll supervisor queue badge
     if(_userPerms.has('file_sar')) refreshSupQueueBadge();
     go('dashboard');
   } else { showErr(r?.error||'Invalid code'); }

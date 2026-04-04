@@ -204,10 +204,12 @@ def _create_session(user: dict, ip: str) -> dict:
     _log_user_action(user["user_id"], "LOGIN", detail=f"From {ip}")
 
     return {
-        "ok":       True,
-        "token":    token,
-        "user":     _safe_user(user),
-        "expires":  (now + timedelta(seconds=SESSION_TTL)).isoformat(),
+        "ok":          True,
+        "token":       token,
+        "user":        _safe_user(user),
+        "permissions": sorted(PERMISSIONS.get(user["role"], [])),
+        "role":        user["role"],
+        "expires":     (now + timedelta(seconds=SESSION_TTL)).isoformat(),
     }
 
 
