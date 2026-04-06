@@ -99,7 +99,7 @@ USERS = {
 
 # ── Session store ─────────────────────────────────────────────────────────────
 SESSIONS = {}           # { token: { user_id, created_at, expires_at, ip, ... } }
-SESSION_TTL = 28800     # 8 hours
+SESSION_TTL = 86400     # 24 hours
 
 # ── User audit trail ──────────────────────────────────────────────────────────
 USER_AUDIT = defaultdict(list)   # { user_id: [ {ts, action, target, detail} ] }

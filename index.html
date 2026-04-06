@@ -253,7 +253,7 @@ input:focus,select:focus{outline:2px solid var(--mid);outline-offset:1px}
 </style>
 </head>
 <body>
-<div class="app">
+<div class="app" style="display:flex">
 <!-- SIDEBAR -->
 <div class="sidebar">
   <div class="logo">
@@ -319,6 +319,23 @@ input:focus,select:focus{outline:2px solid var(--mid);outline-offset:1px}
 // API is always on the same host — works locally AND on Railway/cloud
 const API = window.location.origin;
 let _liveFeedTimer = null, _chartInst = {}, _detailAlertId = null;
+
+// ── NO-AUTH MODE: set auth state immediately so nothing blocks ────────────────
+window._authToken   = 'demo-no-auth';
+window._currentUser = {
+  user_id:'usr_admin', name:'Ransford Adjapong', email:'r.adjapong@fncb.com',
+  role:'admin', department:'AML Compliance', active:true, avatar:'R', color:'#7832B4'
+};
+window._userPerms = new Set([
+  'view_dashboard','view_alerts','investigate_alert','add_case_note',
+  'view_cases','view_documents','upload_document','view_sar_drafts',
+  'edit_sar_draft','view_entity_graph','view_sanctions','run_sanctions_screen',
+  'view_analytics','view_notifications','clear_alert','escalate_alert',
+  'create_case','update_case_status','approve_sar','file_sar',
+  'delete_document','send_notification','view_audit_log','view_all_cases',
+  'manage_users','configure_system','configure_email','trigger_retrain',
+  'view_system_health','manage_roles','export_reports','view_all_audit'
+]);
 
 // ── Mobile sidebar controls ────────────────────────────────────────────────
 function toggleSidebar(){
@@ -438,19 +455,10 @@ const TITLES = {
 };
 
 async function go(page) {
-  if(_liveFeedTimer){clearInterval(_liveFeedTimer);_liveFeedTimer=null;}
-  Object.values(_chartInst).forEach(c=>{try{c.destroy()}catch(e){}});
-  _chartInst={};
-  document.querySelectorAll('.ni').forEach(el=>{
-    el.classList.toggle('active', el.getAttribute('onclick')===`go('${page}')`);
-  });
-  $('page-title').textContent = TITLES[page]||page;
-  $('content').innerHTML = `<div style="padding:40px;text-align:center;color:var(--tx2)"><div class="spin"></div></div>`;
-
-  await ({
-    dashboard, pipeline, models, scorer,
-    alerts, cases, deployment, compliance, audit
-  }[page] || dashboard)();
+  // Delegated to window.go which is fully defined after all scripts load
+  // This stub is replaced at the bottom of the last script block
+  if(window._goFinal) { await window._goFinal(page); return; }
+  if(window.dashboard) await window.dashboard();
 }
 
 // ── Dashboard ─────────────────────────────────────────────────────────────────
@@ -1002,42 +1010,217 @@ async function takeCaseAlert(alertId) {
 }
 
 async function openCase(id) {
-  const c = await api(`/api/cases/${id}`) || {};
-  const prev = $('content').innerHTML;
-  $('content').innerHTML = `
-<div style="display:flex;align-items:center;gap:8px;margin-bottom:14px">
-  <button class="btn" onclick="go('cases')">← Back</button>
-  <span style="font-family:monospace;font-size:13px;font-weight:500">${c.id}</span>
-  ${pb(c.priority||'low')} ${sb(c.status||'open')}
-</div>
-<div class="g2">
-<div>
-<div class="card"><div class="ch"><span class="ct">Case details</span></div><div class="cb">
-  <div style="margin-bottom:10px"><div class="det-title">Entity</div><div style="font-size:14px;font-weight:500">${c.entity}</div></div>
-  <div style="margin-bottom:10px"><div class="det-title">Typology</div><div style="font-size:13px">${c.typology||'—'}</div></div>
-  <div style="margin-bottom:10px"><div class="det-title">Narrative</div><div style="font-size:12px;color:var(--tx2);line-height:1.6;background:var(--bg2);padding:10px;border-radius:6px">${c.narrative||'No narrative yet.'}</div></div>
-  <div style="margin-bottom:10px"><div class="det-title">Officer</div><div style="font-size:13px">${c.officer||'Unassigned'}</div></div>
-  <div class="btn-row">
-    ${_userPerms.has('file_sar') ?
-      `<button class="btn primary" onclick="fileCase('${c.id}')">📋 File SAR with FinCEN</button>` :
-      `<div style="font-size:11px;padding:7px 12px;background:var(--bg2);border-radius:6px;color:var(--tx2)">🔒 SAR filing requires supervisor or admin role</div>`}
-    ${_userPerms.has('update_case_status') ? `<button class="btn success" onclick="updateCaseStatus('${c.id}','review')">Mark in review</button>` : ''}
-    ${_userPerms.has('file_sar') ? `<button class="btn warn" onclick="showCaseAssignDialog('${c.id}')">Re-assign case</button>` : ''}
-    <button class="btn" onclick="go('cases')">Close</button>
-  </div>
-</div></div>
-</div>
-<div>
-<div class="card"><div class="ch"><span class="ct">Linked alerts</span></div><div class="cb" id="case-alerts">
-  ${(c.alert_details||[]).length?c.alert_details.map(a=>`<div style="display:flex;align-items:center;gap:8px;padding:8px;border-radius:6px;border:1px solid var(--bdr);margin-bottom:6px;font-size:12px;cursor:pointer" onclick="openAlertDetail('${a.id}');_detailAlertId='${a.id}';go('alerts')">
-    <span style="font-family:monospace;font-size:11px">${a.id}</span>
-    <span style="flex:1">${a.entity}</span>
-    <span style="font-weight:700;color:${sc(a.score)}">${a.score}</span>
-    ${pb(a.priority)}
-  </div>`).join(''):'<div style="font-size:12px;color:var(--tx2)">No alert details available</div>'}
-</div></div>
-</div>
-</div>`;
+  const c = await api("/api/cases/" + id) || {};
+  const alerts = c.alert_details || [];
+  const cid = c.id || id;
+  const score = c.score || (alerts.length ? Math.max.apply(null, alerts.map(function(a){return a.score||0;})) : 0);
+  const scoreColor = score>=90?"#E24B4A":score>=70?"#E67E22":"#1EA064";
+
+  // ── Build real investigation narrative ──────────────────────────────────
+  function buildNarrative() {
+    var entity   = c.entity || "Unknown Entity";
+    var typo     = c.typology || "suspicious activity";
+    var count    = alerts.length;
+    var maxScore = score;
+    var channels = [];
+    alerts.forEach(function(a){ if(a.channel && channels.indexOf(a.channel)<0) channels.push(a.channel); });
+    var channelStr = channels.length ? channels.join(", ") : "multiple channels";
+    var officer  = c.officer || "the assigned officer";
+    var opened   = c.created_at ? new Date(c.created_at).toLocaleDateString("en-GB",{day:"numeric",month:"long",year:"numeric"}) : "recently";
+
+    var ctx = {};
+    ctx["Structuring"] = "The transaction pattern is consistent with deliberate threshold evasion - multiple transactions structured just below CTR reporting thresholds ($10,000) across different branches and time windows to avoid mandatory filing obligations.";
+    ctx["Structuring / threshold evasion"] = "Multiple transactions have been identified that appear deliberately structured below the Currency Transaction Report (CTR) threshold of $10,000. This pattern - commonly known as structuring - is a federal offense under 31 U.S.C. section 5324 regardless of whether the underlying funds are legitimate.";
+    ctx["Layering"] = "The entity has engaged in a series of rapid, complex fund movements across multiple accounts and jurisdictions consistent with the layering phase of money laundering. Funds are moved in quick succession with no apparent commercial rationale, making the audit trail difficult to follow.";
+    ctx["Shell Company"] = "Activity is consistent with use of a shell company structure to obscure beneficial ownership. The entity exhibits characteristics typical of nominee control: minimal operational footprint, new account activity, high counterparty degree, and transaction volumes disproportionate to stated business purpose.";
+    ctx["Smurfing"] = "Multiple sub-threshold cash deposits have been identified across a short time window, consistent with a coordinated smurfing operation. The pattern suggests organised placement of illicit funds using multiple depositors or branch locations to avoid detection.";
+    ctx["Sanctions"] = "Transactions indicate potential sanctions exposure. Activity involves counterparties, jurisdictions, or payment channels with elevated OFAC/SDN risk indicators. The velocity and volume of cross-border transfers are inconsistent with the stated risk profile.";
+    ctx["Layering / Shell"] = "The entity demonstrates a complex layered transaction pattern involving apparent shell company intermediaries. Rapid succession of transfers through multiple entities obscures the origin of funds.";
+    ctx["Crypto/Virtual Assets"] = "The entity has engaged in rapid conversion between fiat and virtual assets with no apparent commercial purpose. This pattern is consistent with crypto-based layering, where digital asset conversion is used to break the audit trail before funds are reintroduced to the financial system.";
+    ctx["Trade-Based AML"] = "Discrepancies in trade finance documentation and payment flows indicate possible trade-based money laundering (TBML). Over/under-invoicing patterns have been detected relative to market benchmarks.";
+    ctx["Fraud/Cybercrime"] = "Transaction patterns are consistent with proceeds of fraud or cybercrime. Rapid outbound wire activity following large inbound credits, combined with new counterparty relationships and high-risk jurisdictions, indicates possible mule account behaviour.";
+    var contextPara = ctx[typo] || "The detected activity pattern is anomalous relative to the peer group and historical baseline, warranting further investigation under the institution BSA/AML programme.";
+
+    var riskFactors = [];
+    if (maxScore >= 90) riskFactors.push("composite ML risk score exceeding 90/100");
+    else if (maxScore >= 75) riskFactors.push("elevated ML risk score of " + maxScore + "/100");
+    if (count >= 3) riskFactors.push(count + " linked critical alerts");
+    if (channels.length >= 2) riskFactors.push("activity spanning " + channels.length + " transaction channels");
+    var riskStr = riskFactors.length ? " Key risk indicators include: " + riskFactors.join("; ") + "." : "";
+
+    return [
+      "CASE " + cid + " - INVESTIGATION NARRATIVE",
+      "",
+      "Subject entity " + entity + " was escalated to case management on " + opened + " following automated detection of " + typo + " activity by the AI/ML ensemble monitoring system." + riskStr,
+      "",
+      contextPara,
+      "",
+      "A total of " + count + " alert" + (count!==1?"s":"") + " have been linked to this case, with the highest individual risk score of " + maxScore + "/100. Activity observed across " + channelStr + ". The ML ensemble (Isolation Forest, XGBoost, GNN, LSTM) flagged this entity based on anomalous velocity, counterparty network density, and behavioural deviation from peer-group baseline - achieving 89.8% fewer false positives than the legacy rule-based system.",
+      "",
+      "This case has been assigned to " + officer + " for review. Recommended actions: (1) obtain all transaction records and account opening documentation; (2) conduct enhanced due diligence on identified counterparties; (3) assess whether a Suspicious Activity Report (SAR) should be filed with FinCEN under 31 U.S.C. section 5318(g); (4) determine whether account restriction or closure is warranted.",
+      "",
+      "All findings must be recorded within 30 calendar days of case opening, in compliance with the institution BSA/AML Programme."
+    ].join("\n");
+  }
+
+  // ── Build entity graph SVG ────────────────────────────────────────────────
+  function buildGraph() {
+    var channels = [];
+    alerts.forEach(function(a){ if(a.channel && channels.indexOf(a.channel)<0) channels.push(a.channel); });
+    var nodeColor = score>=90?"#E24B4A":score>=70?"#E67E22":"#1EA064";
+    var chanColors = {"Wire Transfer":"#1E50B4","Cash Deposit":"#7832B4","Fintech API":"#0F6E56","Mobile Banking":"#B8490A","FX/Treasury":"#BA7517","Trade Finance":"#5a5a56"};
+    var entityLabel = (c.entity||"Entity").length>16 ? (c.entity||"Entity").substring(0,14)+"..." : (c.entity||"Entity");
+
+    var nodes = [{id:"E0",label:entityLabel,x:200,y:145,r:28,color:nodeColor,type:"entity",score:score}];
+    var edges = [];
+
+    channels.slice(0,4).forEach(function(ch, i) {
+      var angle = -Math.PI*0.6 + i*(Math.PI*1.2/Math.max(channels.length-1,1));
+      var nx = 200+120*Math.cos(angle), ny = 145+95*Math.sin(angle);
+      nodes.push({id:"C"+i,label:ch.replace(" Transfer","").replace(" Banking",""),x:nx,y:ny,r:17,color:chanColors[ch]||"#444",type:"channel"});
+      edges.push({from:"E0",to:"C"+i});
+    });
+
+    alerts.slice(0,5).forEach(function(a, i) {
+      var angle = Math.PI*0.2+i*(Math.PI*0.6/Math.max(alerts.length-1,1));
+      var nx = 200+130*Math.cos(angle), ny = 145+105*Math.sin(angle);
+      var ac = (a.score||0)>=90?"#E24B4A":(a.score||0)>=70?"#E67E22":"#1EA064";
+      nodes.push({id:"A"+i,label:a.id||("ALT-"+i),x:nx,y:ny,r:14,color:ac,type:"alert",score:a.score||0});
+      edges.push({from:"E0",to:"A"+i});
+    });
+
+    var s = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 290" style="width:100%;height:200px;background:var(--bg1);border-radius:8px">';
+    s += '<defs><pattern id="g" width="20" height="20" patternUnits="userSpaceOnUse"><path d="M20 0L0 0 0 20" fill="none" stroke="rgba(255,255,255,0.03)" stroke-width="1"/></pattern></defs>';
+    s += '<rect width="400" height="290" fill="url(#g)"/>';
+    edges.forEach(function(e) {
+      var fn = nodes.filter(function(n){return n.id===e.from;})[0];
+      var tn = nodes.filter(function(n){return n.id===e.to;})[0];
+      if(fn&&tn) s += '<line x1="'+fn.x+'" y1="'+fn.y+'" x2="'+tn.x+'" y2="'+tn.y+'" stroke="rgba(255,255,255,0.15)" stroke-width="1.5" stroke-dasharray="4,3"/>';
+    });
+    nodes.forEach(function(n) {
+      s += '<circle cx="'+n.x+'" cy="'+n.y+'" r="'+(n.r+5)+'" fill="'+n.color+'" opacity="0.12"/>';
+      s += '<circle cx="'+n.x+'" cy="'+n.y+'" r="'+n.r+'" fill="'+n.color+'" stroke="rgba(255,255,255,0.2)" stroke-width="1.5"/>';
+      if(n.type==="entity") s += '<text x="'+n.x+'" y="'+(n.y+4)+'" text-anchor="middle" font-size="11" font-weight="700" fill="#fff" font-family="Calibri,sans-serif">'+n.score+'</text>';
+      else if(n.type==="alert"&&n.score) s += '<text x="'+n.x+'" y="'+(n.y+3)+'" text-anchor="middle" font-size="8" font-weight="700" fill="#fff" font-family="Calibri,sans-serif">'+n.score+'</text>';
+      s += '<text x="'+n.x+'" y="'+(n.y+n.r+11)+'" text-anchor="middle" font-size="8.5" fill="rgba(255,255,255,0.65)" font-family="Calibri,sans-serif">'+n.label+'</text>';
+    });
+    s += '<circle cx="14" cy="276" r="4" fill="#E24B4A"/><text x="21" y="280" font-size="8" fill="rgba(255,255,255,0.4)" font-family="Calibri,sans-serif">Entity</text>';
+    s += '<circle cx="65" cy="276" r="4" fill="#1E50B4"/><text x="72" y="280" font-size="8" fill="rgba(255,255,255,0.4)" font-family="Calibri,sans-serif">Channel</text>';
+    s += '<circle cx="125" cy="276" r="4" fill="#E67E22"/><text x="132" y="280" font-size="8" fill="rgba(255,255,255,0.4)" font-family="Calibri,sans-serif">Alert</text>';
+    s += '</svg>';
+    return s;
+  }
+
+  // ── Build page HTML using DOM methods (no quote nesting issues) ───────────
+  var container = document.createElement("div");
+
+  // Header row
+  var hdr = document.createElement("div");
+  hdr.style.cssText = "display:flex;align-items:center;gap:8px;margin-bottom:14px";
+  var backBtn = document.createElement("button");
+  backBtn.className = "btn";
+  backBtn.textContent = "\u2190 Back";
+  backBtn.onclick = function(){ window.go("cases"); };
+  var cidSpan = document.createElement("span");
+  cidSpan.style.cssText = "font-family:monospace;font-size:13px;font-weight:500";
+  cidSpan.textContent = cid;
+  hdr.appendChild(backBtn);
+  hdr.appendChild(cidSpan);
+  hdr.innerHTML += " " + pb(c.priority||"low") + " " + sb(c.status||"open");
+  container.appendChild(hdr);
+
+  // Row 1: details + graph
+  var row1 = document.createElement("div");
+  row1.className = "g2";
+  row1.style.marginBottom = "14px";
+
+  // LEFT: case details card
+  var detCard = document.createElement("div");
+  detCard.className = "card";
+  var fileBtn = _userPerms.has("file_sar")
+    ? '<button class="btn primary" id="fileSarBtn">&#128203; File SAR</button>'
+    : '<div style="font-size:11px;padding:6px 10px;background:var(--bg2);border-radius:6px;color:var(--tx2)">&#128274; SAR requires supervisor</div>';
+  var reviewBtn = _userPerms.has("update_case_status") ? '<button class="btn success" id="reviewBtn">Mark in review</button>' : "";
+  var assignBtn = _userPerms.has("file_sar") ? '<button class="btn warn" id="assignBtn">Re-assign</button>' : "";
+  detCard.innerHTML = '<div class="ch"><span class="ct">Case details</span></div><div class="cb">'
+    + '<div style="margin-bottom:10px"><div class="det-title">Entity</div><div style="font-size:14px;font-weight:600">' + (c.entity||"—") + "</div></div>"
+    + '<div style="margin-bottom:10px"><div class="det-title">Typology</div><div style="display:inline-block;background:rgba(231,126,34,0.15);color:#E67E22;border:1px solid rgba(231,126,34,0.3);border-radius:4px;padding:2px 8px;font-size:12px;font-weight:500">' + (c.typology||"—") + "</div></div>"
+    + '<div style="margin-bottom:10px"><div class="det-title">Risk Score</div><div style="font-size:22px;font-weight:700;color:' + scoreColor + '">' + score + '<span style="font-size:12px;color:var(--tx2)">/100</span></div></div>'
+    + '<div style="margin-bottom:10px"><div class="det-title">Linked Alerts</div><div style="font-size:13px">' + alerts.length + " alert" + (alerts.length!==1?"s":"") + "</div></div>"
+    + '<div style="margin-bottom:14px"><div class="det-title">Officer</div><div style="font-size:13px">' + (c.officer||"Unassigned") + "</div></div>"
+    + '<div class="btn-row">' + fileBtn + reviewBtn + assignBtn + '<button class="btn" id="closeBtn">Close</button></div>'
+    + "</div>";
+  row1.appendChild(detCard);
+
+  // RIGHT: entity graph card
+  var graphCard = document.createElement("div");
+  graphCard.className = "card";
+  graphCard.innerHTML = '<div class="ch"><span class="ct">Entity graph</span><span style="font-size:11px;color:var(--tx2);font-weight:400;margin-left:8px">· Transaction network</span></div>'
+    + '<div class="cb" style="padding:10px">' + buildGraph()
+    + '<div style="margin-top:6px;font-size:11px;color:var(--tx2)">Center = entity score · Top arc = channels · Bottom arc = alerts</div></div>';
+  row1.appendChild(graphCard);
+  container.appendChild(row1);
+
+  // Row 2: narrative + alerts
+  var row2 = document.createElement("div");
+  row2.className = "g2";
+
+  // LEFT: narrative
+  var narrative = buildNarrative();
+  var narCard = document.createElement("div");
+  narCard.className = "card";
+  narCard.innerHTML = '<div class="ch"><span class="ct">Investigation narrative</span><span style="font-size:11px;color:var(--tx2);font-weight:400;margin-left:8px">· Auto-generated · BSA/AML</span></div>'
+    + '<div class="cb"><div style="font-size:11.5px;color:var(--tx2);line-height:1.8;white-space:pre-wrap;background:var(--bg2);padding:14px;border-radius:6px;border-left:3px solid #1E50B4;max-height:280px;overflow-y:auto" id="caseNarrative"></div></div>';
+  row2.appendChild(narCard);
+
+  // RIGHT: linked alerts
+  var altCard = document.createElement("div");
+  altCard.className = "card";
+  var altHtml = '<div class="ch"><span class="ct">Linked alerts</span></div><div class="cb" id="case-alerts">';
+  if (alerts.length) {
+    alerts.forEach(function(a) {
+      altHtml += '<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:6px;border:1px solid var(--bdr);margin-bottom:6px;font-size:12px;cursor:pointer" '
+        + 'data-alertid="' + a.id + '">'
+        + '<span style="font-family:monospace;font-size:11px;color:var(--tx2)">' + a.id + "</span>"
+        + '<span style="flex:1;font-weight:500">' + a.entity + "</span>"
+        + '<span style="font-weight:700;font-size:14px;color:' + sc(a.score) + '">' + a.score + "</span>"
+        + " " + pb(a.priority) + "</div>";
+    });
+  } else {
+    altHtml += '<div style="font-size:12px;color:var(--tx2);padding:8px">No alert details available</div>';
+  }
+  altHtml += "</div>";
+  altCard.innerHTML = altHtml;
+  row2.appendChild(altCard);
+  container.appendChild(row2);
+
+  // ── Render to DOM ─────────────────────────────────────────────────────────
+  var ct = document.getElementById("content");
+  ct.innerHTML = "";
+  ct.appendChild(container);
+
+  // Set narrative text safely (avoid XSS and escaping issues)
+  var narDiv = document.getElementById("caseNarrative");
+  if (narDiv) narDiv.textContent = narrative;
+
+  // Wire up buttons after DOM is set
+  var fb = document.getElementById("fileSarBtn");
+  if (fb) fb.onclick = function(){ fileCase(cid); };
+  var rb = document.getElementById("reviewBtn");
+  if (rb) rb.onclick = function(){ updateCaseStatus(cid, "review"); };
+  var ab = document.getElementById("assignBtn");
+  if (ab) ab.onclick = function(){ showCaseAssignDialog(cid); };
+  var cb = document.getElementById("closeBtn");
+  if (cb) cb.onclick = function(){ window.go("cases"); };
+
+  // Wire up alert clicks
+  var altDivs = document.querySelectorAll("[data-alertid]");
+  altDivs.forEach(function(div) {
+    var aid = div.getAttribute("data-alertid");
+    div.onmouseover = function(){ this.style.background = "var(--bg2)"; };
+    div.onmouseout  = function(){ this.style.background = ""; };
+    div.onclick = function(){ openAlertDetail(aid); window._detailAlertId = aid; window.go("alerts"); };
+  });
 }
 
 async function fileCase(id) {
@@ -1180,17 +1363,23 @@ function startLiveFeed() {
 
 // ── Health check ──────────────────────────────────────────────────────────────
 async function checkHealth() {
-  const h = await api('/api/health');
-  if(h?.status==='ok'){
-    $('api-status').innerHTML=`<span style="color:#82D4B0">● API connected</span><br>Backend: localhost:8787<br>v2.4.1 · Production`;
-  } else {
-    $('api-status').innerHTML=`<span style="color:#F09595">● API offline</span><br>Start: python start.py<br>Port 8787`;
+  // Use plain fetch (not api()) so a network error never triggers force-logout
+  try {
+    const resp = await fetch(API + '/api/health');
+    const h = await resp.json();
+    if(h?.status === 'ok') {
+      $('api-status').innerHTML = `<span style="color:#82D4B0">● Connected</span>`;
+    } else {
+      $('api-status').innerHTML = `<span style="color:#F09595">● Offline</span>`;
+    }
+  } catch(e) {
+    $('api-status').innerHTML = `<span style="color:#F09595">● Offline</span>`;
   }
 }
 
 checkHealth();
-setInterval(checkHealth, 10000);
-initAuth();
+setInterval(checkHealth, 30000);
+// initAuth() is called at end of all scripts (see bottom of file)
 </script>
 
 <script>
@@ -1399,30 +1588,7 @@ async function monitoring() {
     options:{responsive:true,maintainAspectRatio:false,scales:{y:{min:.5,max:1,ticks:{font:{size:9},callback:v=>Math.round(v*100)+'%'}},x:{ticks:{font:{size:9}},grid:{display:false}}},plugins:{legend:{labels:{boxWidth:9,font:{size:10}}}}}});
 }
 
-// ── Patch sidebar & router ────────────────────────────────────────────────
-// Nav items managed in static sidebar HTML above
-
-// Extend titles and pages maps
-// TITLES already complete above
-
-const _origGo = window.go;
-window.go = async function(page) {
-  if(window.innerWidth <= 768) closeSidebar();
-  const extras = {sar: sarWorkbench, features: featureDetail, monitoring};
-  if(extras[page]) {
-    if(window._liveFeedTimer){clearInterval(window._liveFeedTimer);window._liveFeedTimer=null;}
-    Object.values(window._chartInst||{}).forEach(c=>{try{c.destroy()}catch(e){}});
-    window._chartInst = {};
-    document.querySelectorAll('.ni').forEach(el=>{
-      el.classList.toggle('active', el.getAttribute('onclick')===`go('${page}')`);
-    });
-    $('page-title').textContent = TITLES[page]||page;
-    $('content').innerHTML = `<div style="padding:40px;text-align:center;color:var(--tx2)"><div class="spin"></div></div>`;
-    await extras[page]();
-  } else {
-    await _origGo(page);
-  }
-};
+// ── Router patched — all routes now in primary go() above ────────────────
 </script>
 <script>
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1987,7 +2153,7 @@ async function sanctionsScreen() {
   <div class="mc"><div class="ml">SDN entries</div><div class="mv">${stats.total_entries||0}</div><div class="md">${stats.individuals||0} individuals · ${stats.entities||0} entities</div></div>
   <div class="mc"><div class="ml">Programs covered</div><div class="mv">${stats.programs_covered||0}</div><div class="md">OFAC / UN / EU / HMT</div></div>
   <div class="mc"><div class="ml">High-risk jurisdictions</div><div class="mv">${stats.high_risk_jurisdictions||0}</div><div class="md">FATF grey + black list</div></div>
-  <div class="mc"><div class="ml">List version</div><div class="mv" style="font-size:14px">2024-Q4</div><div class="md">Representative seed data</div></div>
+  <div class="mc"><div class="ml">List version</div><div class="mv" style="font-size:12px">${stats.last_updated||'OFAC SDN Apr 2026'}</div><div class="md">${(stats.total_entries||0).toLocaleString()} total entries</div></div>
 </div>
 <div class="g2">
 <div>
@@ -2006,6 +2172,33 @@ async function sanctionsScreen() {
   </div>
 </div>
 <div class="card">
+  <div class="ch"><span class="ct">Batch screen — upload file</span></div>
+  <div class="cb">
+    <div style="font-size:12px;color:var(--tx2);margin-bottom:12px">
+      Upload a Word, Excel, or PDF file containing a list of names. Each name is screened against all 17,007 SDN entries and results are returned as a downloadable Excel report.
+    </div>
+    <div style="border:2px dashed var(--bdr);border-radius:8px;padding:20px;text-align:center;margin-bottom:12px;transition:border-color .2s" 
+         id="drop-zone"
+         ondragover="event.preventDefault();this.style.borderColor='var(--blue)'"
+         ondragleave="this.style.borderColor='var(--bdr)'"
+         ondrop="handleFileDrop(event)" onclick="openFilePicker()" style="cursor:pointer">
+      <div style="font-size:28px;margin-bottom:6px">📄</div>
+      <div style="font-size:13px;font-weight:500;color:var(--tx1);margin-bottom:4px">Drop file here or click to browse</div>
+      <div style="font-size:11px;color:var(--tx2)">.docx &nbsp;·&nbsp; .xlsx &nbsp;·&nbsp; .pdf</div>
+      <input type="file" id="batch-file-input" accept=".docx,.xlsx,.xls,.pdf,.txt"
+             style="position:absolute;opacity:0;pointer-events:none" onchange="handleFileSelect(event)">
+    </div>
+    <div id="batch-file-info" style="display:none;margin-bottom:10px;padding:8px 12px;background:var(--bg2);border-radius:6px;font-size:12px;display:flex;align-items:center;justify-content:space-between">
+      <span id="batch-file-name" style="font-weight:500">No file selected</span>
+      <button onclick="clearBatchFile()" style="background:none;border:none;color:var(--tx2);cursor:pointer;font-size:16px;padding:0 4px">×</button>
+    </div>
+    <button class="btn primary" id="batch-screen-btn" onclick="runBatchFileScreen()" style="width:100%;padding:10px;opacity:0.5;pointer-events:none">
+      Screen file against SDN list →
+    </button>
+    <div style="margin-top:8px;font-size:11px;color:var(--tx2);text-align:center">Max 500 names per file</div>
+  </div>
+</div>
+<div class="card" style="margin-top:14px">
   <div class="ch"><span class="ct">Batch screen — case entities</span></div>
   <div class="cb">
     <div style="font-size:12px;color:var(--tx2);margin-bottom:10px">Screen all entities from current open cases at once.</div>
@@ -2041,14 +2234,41 @@ async function sanctionsScreen() {
 }
 
 async function runSanctionsScreen() {
-  const name    = ($('scr-name')||{}).value?.trim();
-  const country = ($('scr-country')||{}).value?.trim();
-  if(!name){toast('Enter an entity name');return;}
-  const res = $('screen-result');
-  if(res) res.innerHTML='<div class="ch"><span class="ct">Screening result</span></div><div style="padding:20px;text-align:center"><div class="spin"></div></div>';
-  const r = await api('/api/sanctions/screen', {method:'POST', body:JSON.stringify({name,country,officer:'J. Mensah'})});
-  if(!r){toast('Screening failed'); return;}
-  renderScreenResult(r);
+  var name    = ($('scr-name')||{}).value;
+  if(name) name = name.trim(); else name = '';
+  var country = ($('scr-country')||{}).value;
+  if(country) country = country.trim(); else country = '';
+  if(!name){toast('Enter an entity name'); return;}
+
+  var res = $('screen-result');
+  if(res) res.innerHTML = '<div class="ch"><span class="ct">Screening result</span></div>'
+    + '<div style="padding:30px;text-align:center"><div class="spin"></div>'
+    + '<div style="margin-top:12px;font-size:12px;color:var(--tx2)">Checking 17,007 SDN entries…</div></div>';
+
+  // Use fetch() directly — bypasses api() wrapper to rule out any wrapper issues
+  try {
+    var resp = await fetch(API + '/api/sanctions/screen', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name: name, country: country, officer: 'system'})
+    });
+    if (!resp.ok && resp.status !== 200) {
+      if(res) res.innerHTML = '<div class="ch"><span class="ct">Screening result</span></div>'
+        + '<div style="padding:20px;text-align:center;color:var(--red)">Server error ' + resp.status + '. Please try again.</div>';
+      return;
+    }
+    var r = await resp.json();
+    if (!r || !r.status) {
+      if(res) res.innerHTML = '<div class="ch"><span class="ct">Screening result</span></div>'
+        + '<div style="padding:20px;text-align:center;color:var(--red)">Invalid response from server. Please try again.</div>';
+      return;
+    }
+    renderScreenResult(r);
+  } catch(e) {
+    if(res) res.innerHTML = '<div class="ch"><span class="ct">Screening result</span></div>'
+      + '<div style="padding:20px;text-align:center;color:var(--red)">Network error: ' + e.message + '. Is the server running?</div>';
+    toast('Error: ' + e.message);
+  }
 }
 
 async function runBatchScreen() {
@@ -2071,49 +2291,326 @@ async function runBatchScreen() {
   }
 }
 
+// ── Batch file screening functions ───────────────────────────────────────────
+var _batchFile = null;
+
+function handleFileDrop(event) {
+  event.preventDefault();
+  var dz = document.getElementById('drop-zone');
+  if(dz) dz.style.borderColor = 'var(--bdr)';
+  var files = event.dataTransfer.files;
+  if(files && files.length > 0) setBatchFile(files[0]);
+}
+
+function handleFileSelect(event) {
+  var files = event.target.files;
+  if(files && files.length > 0) setBatchFile(files[0]);
+}
+
+function setBatchFile(file) {
+  var allowed = ['.docx','.doc','.xlsx','.xls','.pdf','.txt'];
+  var ext = file.name.substring(file.name.lastIndexOf('.')).toLowerCase();
+  if(allowed.indexOf(ext) === -1) {
+    toast('Unsupported file type. Please upload .docx, .xlsx, or .pdf');
+    return;
+  }
+  _batchFile = file;
+  var info = document.getElementById('batch-file-info');
+  var nameEl = document.getElementById('batch-file-name');
+  var btn = document.getElementById('batch-screen-btn');
+  var dz = document.getElementById('drop-zone');
+  if(nameEl) nameEl.textContent = file.name + '  (' + (file.size > 1024 ? Math.round(file.size/1024) + ' KB' : file.size + ' B') + ')';
+  if(info) { info.style.display = 'flex'; }
+  if(btn)  { btn.style.opacity = '1'; btn.style.pointerEvents = 'auto'; }
+  if(dz)   { dz.style.borderColor = 'var(--blue)'; }
+}
+
+function clearBatchFile() {
+  _batchFile = null;
+  var info = document.getElementById('batch-file-info');
+  var btn  = document.getElementById('batch-screen-btn');
+  var dz   = document.getElementById('drop-zone');
+  var inp  = document.getElementById('batch-file-input');
+  if(info) info.style.display = 'none';
+  if(btn)  { btn.style.opacity = '0.5'; btn.style.pointerEvents = 'none'; }
+  if(dz)   { dz.style.borderColor = 'var(--bdr)'; }
+  if(inp)  inp.value = '';
+}
+
+function openFilePicker() {
+  var inp = document.getElementById('batch-file-input');
+  if(inp) inp.click();
+}
+
+async function runBatchFileScreen() {
+  if(!_batchFile) { toast('Please select a file first'); return; }
+  
+  var res = document.getElementById('screen-result');
+  if(res) res.innerHTML = '<div class="ch"><span class="ct">Batch Screening</span></div>'
+    + '<div style="padding:30px;text-align:center"><div class="spin"></div>'
+    + '<div style="margin-top:12px;font-size:13px;font-weight:500">Reading file and screening against 17,007 SDN entries…</div>'
+    + '<div style="margin-top:6px;font-size:11px;color:var(--tx2)">This may take up to 30 seconds for large files</div></div>';
+
+  try {
+    // Read file as base64
+    var b64 = await new Promise(function(resolve, reject) {
+      var reader = new FileReader();
+      reader.onload = function(e) {
+        var dataUrl = e.target.result;
+        resolve(dataUrl.split(',')[1]);
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(_batchFile);
+    });
+
+    var resp = await fetch(API + '/api/sanctions/batch-upload', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        file_data: b64,
+        filename:  _batchFile.name,
+        officer:   'system'
+      })
+    });
+
+    var r = await resp.json();
+
+    if(!resp.ok || r.error) {
+      if(res) res.innerHTML = '<div class="ch"><span class="ct">Batch Screening — Error</span></div>'
+        + '<div style="padding:20px;text-align:center;color:var(--red)">'
+        + '<div style="font-size:16px;font-weight:600;margin-bottom:8px">⚠ ' + (r.error || 'Upload failed') + '</div></div>';
+      return;
+    }
+
+    renderBatchResult(r, _batchFile.name);
+
+  } catch(e) {
+    if(res) res.innerHTML = '<div class="ch"><span class="ct">Batch Screening</span></div>'
+      + '<div style="padding:20px;text-align:center;color:var(--red)">Network error: ' + e.message + '</div>';
+  }
+}
+
+function renderBatchResult(r, filename) {
+  var res = document.getElementById('screen-result');
+  if(!res) return;
+
+  var confirmed = r.confirmed || 0;
+  var potential = r.potential || 0;
+  var clear     = r.clear     || 0;
+  var total     = r.total     || 0;
+  var hasHits   = confirmed > 0 || potential > 0;
+
+  var html = '<div class="ch"><span class="ct">Batch Screening — ' + escHtml(filename) + '</span>'
+           + '<span style="font-size:11px;color:var(--tx2)">' + new Date().toLocaleString() + '</span></div>'
+           + '<div style="padding:14px">';
+
+  // Summary banner
+  var bannerCol = confirmed > 0 ? 'var(--red)' : potential > 0 ? 'var(--orange)' : 'var(--green)';
+  var bannerBg  = confirmed > 0 ? 'var(--lred)' : potential > 0 ? 'var(--lorange)' : 'var(--lgreen)';
+  var bannerIcon = confirmed > 0 ? '🚨' : potential > 0 ? '⚠️' : '✅';
+
+  html += '<div style="padding:16px;border-radius:8px;background:' + bannerBg + ';border:2px solid ' + bannerCol + ';margin-bottom:16px">'
+       + '<div style="font-size:18px;font-weight:700;color:' + bannerCol + ';margin-bottom:8px">'
+       + bannerIcon + ' Batch Screen Complete — ' + total + ' names checked</div>'
+       + '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;text-align:center">';
+
+  var stats = [
+    {label:'Confirmed Hits', val:confirmed, col:'var(--red)'},
+    {label:'Potential Matches', val:potential, col:'var(--orange)'},
+    {label:'Clear', val:clear, col:'var(--green)'},
+  ];
+  for(var i=0;i<stats.length;i++) {
+    var s = stats[i];
+    html += '<div style="background:rgba(255,255,255,0.7);border-radius:6px;padding:10px">'
+          + '<div style="font-size:28px;font-weight:800;color:' + s.col + '">' + s.val + '</div>'
+          + '<div style="font-size:11px;color:var(--tx2);margin-top:2px">' + s.label + '</div></div>';
+  }
+  html += '</div></div>';
+
+  // Download button
+  if(r.report_b64) {
+    // Store report first, then build download button (no string quoting issues)
+    window._lastBatchReport = {b64: r.report_b64, name: r.report_name};
+    html += '<div style="margin-bottom:16px;padding:14px;background:var(--bg2);border-radius:8px;border:1px solid var(--bdr)">'
+          + '<div style="font-size:13px;font-weight:600;margin-bottom:8px">📊 Excel Report Ready</div>'
+          + '<div style="font-size:12px;color:var(--tx2);margin-bottom:12px">'
+          + 'Full report: Summary, All Results, Hits Detail</div>'
+          + '<button class="btn primary" id="dl-btn" style="width:100%;padding:10px;font-size:13px"'
+          + ' onclick="if(window._lastBatchReport)downloadBatchReport(window._lastBatchReport.b64,window._lastBatchReport.name)">'
+          + '⬇ Download Excel Report (' + r.report_name + ')</button></div>';
+  }
+
+  // Action required
+  if(hasHits) {
+    html += '<div style="padding:12px 14px;background:var(--lred);border-radius:6px;border-left:4px solid var(--red)">'
+          + '<div style="font-size:13px;font-weight:700;color:var(--red);margin-bottom:6px">⚠ Action Required for ' + (confirmed+potential) + ' name(s)</div>'
+          + '<div style="font-size:12px;color:var(--tx1);line-height:1.8">'
+          + '1. <strong>Review the Excel report</strong> for full match details.<br>'
+          + '2. <strong>Freeze accounts</strong> for any confirmed hits immediately.<br>'
+          + '3. <strong>Do not tip off</strong> the customer — tipping-off is a criminal offence.<br>'
+          + '4. <strong>Escalate to Compliance Officer</strong> and file SARs as required.<br>'
+          + '5. <strong>Report to OFAC</strong> within 10 business days of blocking.'
+          + '</div></div>';
+  }
+
+  html += '<div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--bdr);font-size:10px;color:var(--tx2)">'
+        + 'Screened against OFAC SDN Apr 3 2026 — 17,007 entries</div>';
+  html += '</div>';
+
+  res.innerHTML = html;
+
+  // Wire up download button properly
+  var dlBtn = document.getElementById('dl-btn');
+  if(dlBtn && window._lastBatchReport) {
+    dlBtn.onclick = function() { downloadBatchReport(window._lastBatchReport.b64, window._lastBatchReport.name); };
+  }
+}
+
+function downloadBatchReport(b64, filename) {
+  try {
+    var binary = atob(b64);
+    var bytes  = new Uint8Array(binary.length);
+    for(var i=0;i<binary.length;i++) bytes[i] = binary.charCodeAt(i);
+    var blob = new Blob([bytes], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+    var url  = URL.createObjectURL(blob);
+    var a    = document.createElement('a');
+    a.href     = url;
+    a.download = filename || 'SDN_Batch_Report.xlsx';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast('Report downloaded: ' + a.download);
+  } catch(e) {
+    toast('Download failed: ' + e.message);
+  }
+}
+
 function renderScreenResult(r) {
   const res = $('screen-result');
-  if(!res) return;
-  const statusColor = r.status==='HIT'?'var(--red)':r.status==='POTENTIAL_MATCH'?'var(--orange)':r.status==='CLEAR'?'var(--green)':'var(--mid)';
-  const statusBg    = r.status==='HIT'?'var(--lred)':r.status==='POTENTIAL_MATCH'?'var(--lorange)':r.status==='CLEAR'?'var(--lgreen)':'var(--lblue)';
-  res.innerHTML = `
-  <div class="ch"><span class="ct">Result: ${escHtml(r.query)}</span><span style="font-size:11px;color:var(--tx2)">${new Date(r.screened_at).toLocaleTimeString()}</span></div>
-  <div style="padding:14px">
-    <div style="padding:14px;border-radius:8px;background:${statusBg};border:1px solid ${statusColor};margin-bottom:14px;display:flex;align-items:center;justify-content:space-between">
-      <div>
-        <div style="font-size:18px;font-weight:600;color:${statusColor}">${r.status.replace('_',' ')}</div>
-        <div style="font-size:12px;color:var(--tx2);margin-top:2px">${r.confirmed_hits} confirmed · ${r.potential_matches} potential · ${r.total_checked} entries checked</div>
-      </div>
-      <div style="font-size:28px">${r.status==='HIT'?'🚨':r.status==='POTENTIAL_MATCH'?'⚠️':r.status==='CLEAR'?'✅':'ℹ️'}</div>
-    </div>
-    ${r.matches?.length ? `
-    <div style="font-size:11px;font-weight:500;color:var(--tx2);margin-bottom:8px;text-transform:uppercase;letter-spacing:.4px">SDN Matches</div>
-    ${r.matches.map(m=>`
-    <div style="padding:10px;border-radius:6px;border:1px solid ${m.hit_type==='CONFIRMED_HIT'?'var(--red)':'var(--bdr)'};margin-bottom:8px;background:${m.hit_type==='CONFIRMED_HIT'?'var(--lred)':'var(--bg2)'}">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-        <div style="font-weight:600;font-size:13px">${escHtml(m.sdn_name)}</div>
-        <div style="display:flex;align-items:center;gap:6px">
-          <span style="font-size:18px;font-weight:700;color:${m.match_score>=80?'var(--red)':'var(--orange)'}">${m.match_score}%</span>
-          <span class="bp ${m.hit_type==='CONFIRMED_HIT'?'bc':'bh'}" style="font-size:10px">${m.hit_type.replace('_',' ')}</span>
-        </div>
-      </div>
-      <div style="font-size:11px;color:var(--tx2);line-height:1.6">
-        <div><strong>Matched on:</strong> ${escHtml(m.match_on)}</div>
-        <div><strong>Country:</strong> ${m.country} · <strong>Type:</strong> ${m.entity_type}</div>
-        <div><strong>Programs:</strong> ${m.programs.join(', ')}</div>
-        <div><strong>Reason:</strong> ${escHtml(m.reason)}</div>
-        <div><strong>Added:</strong> ${m.date_added}</div>
-      </div>
-    </div>`).join('')}` : ''}
-    ${r.jurisdiction_hits?.length ? `
-    <div style="font-size:11px;font-weight:500;color:var(--tx2);margin-top:10px;margin-bottom:8px;text-transform:uppercase;letter-spacing:.4px">Jurisdiction Risk</div>
-    ${r.jurisdiction_hits.map(j=>`
-    <div style="padding:8px 10px;border-radius:6px;border:1px solid var(--bdr);margin-bottom:6px;background:var(--bg2);font-size:12px">
-      <strong>${j.jurisdiction}</strong> — <span style="color:${j.risk_level==='critical'?'var(--red)':j.risk_level==='high'?'var(--orange)':'var(--mid)'};font-weight:600">${j.risk_level.toUpperCase()}</span>
-      · FATF: ${j.fatf_status} ${j.programs.length?'· Programs: '+j.programs.join(', '):''}
-    </div>`).join('')}` : ''}
-    ${r.action_required ? `<div style="margin-top:12px;padding:10px;background:var(--lred);border-radius:6px;font-size:12px;color:var(--red);font-weight:500">⚠ Action required — freeze account and escalate to Compliance Officer immediately</div>` : ''}
-  </div>`;
+  if (!res) return;
+
+  // Handle server error responses
+  if (!r || r.error || !r.status || r.status === 'error') {
+    res.innerHTML = '<div class="ch"><span class="ct">Screening Result</span></div>'
+      + '<div style="padding:20px;text-align:center">'
+      + '<div style="color:var(--red);font-size:16px;font-weight:600;margin-bottom:8px">⚠ Screening Error</div>'
+      + '<div style="color:var(--tx2);font-size:12px">' + (r && r.error ? r.error : 'Server error — please try again') + '</div>'
+      + '</div>';
+    return;
+  }
+
+  // Strip Cyrillic characters from OFAC names that contain Russian script annotations
+  function cl(s) { return (s||'').replace(/[\u0400-\u04FF]/g,'').replace(/\s+/g,' ').trim(); }
+
+  var sCol = r.status==='HIT' ? 'var(--red)' : r.status==='POTENTIAL_MATCH' ? 'var(--orange)' : r.status==='CLEAR' ? 'var(--green)' : 'var(--mid)';
+  var sBg  = r.status==='HIT' ? 'var(--lred)' : r.status==='POTENTIAL_MATCH' ? 'var(--lorange)' : r.status==='CLEAR' ? 'var(--lgreen)' : 'var(--lblue)';
+  var icon = r.status==='HIT' ? '🚨' : r.status==='POTENTIAL_MATCH' ? '⚠️' : r.status==='CLEAR' ? '✅' : 'ℹ️';
+  var ts   = new Date(r.screened_at).toLocaleString();
+
+  // ── Status banner ──────────────────────────────────────────────────────────
+  var html = '<div class="ch"><span class="ct">Screening Result — ' + escHtml(r.query) + '</span>'
+           + '<span style="font-size:11px;color:var(--tx2)">' + ts + '</span></div>'
+           + '<div style="padding:14px">'
+           + '<div style="padding:14px 16px;border-radius:8px;background:' + sBg + ';border:2px solid ' + sCol + ';margin-bottom:16px;display:flex;align-items:center;justify-content:space-between">'
+           + '<div>'
+           + '<div style="font-size:20px;font-weight:700;color:' + sCol + '">' + icon + ' ' + r.status.replace(/_/g,' ') + '</div>'
+           + '<div style="font-size:12px;color:var(--tx2);margin-top:4px"><strong>' + r.confirmed_hits + '</strong> confirmed &nbsp;·&nbsp; <strong>' + r.potential_matches + '</strong> potential &nbsp;·&nbsp; Checked <strong>' + (r.total_checked||0).toLocaleString() + '</strong> SDN entries</div>'
+           + '<div style="font-size:11px;color:var(--tx2);margin-top:2px">' + (r.list_version||'') + '</div>'
+           + '</div>'
+           + '<div style="font-size:40px">' + icon + '</div>'
+           + '</div>';
+
+  // ── SDN Matches ────────────────────────────────────────────────────────────
+  var matches = r.matches || [];
+  if (matches.length) {
+    html += '<div style="font-size:11px;font-weight:600;color:var(--tx2);margin-bottom:10px;text-transform:uppercase;letter-spacing:.6px">SDN Matches — ' + r.confirmed_hits + ' confirmed · ' + r.potential_matches + ' potential</div>';
+
+    for (var i = 0; i < matches.length; i++) {
+      var m   = matches[i];
+      var mc  = m.hit_type === 'CONFIRMED_HIT' ? 'var(--red)' : 'var(--orange)';
+      var mb  = m.hit_type === 'CONFIRMED_HIT' ? 'bc' : 'bh';
+      var mbg = m.hit_type === 'CONFIRMED_HIT' ? 'var(--lred)' : 'var(--bg2)';
+
+      // Sanction program badges
+      var progBadges = '';
+      var progs = m.programs || [];
+      for (var pi = 0; pi < progs.length; pi++) {
+        progBadges += '<span style="background:var(--navy);color:#fff;padding:2px 8px;border-radius:3px;font-size:10px;font-family:monospace;font-weight:500;margin-right:4px;margin-bottom:4px;display:inline-block">' + progs[pi] + '</span>';
+      }
+
+      html += '<div style="border:1.5px solid ' + mc + ';border-radius:8px;margin-bottom:12px;overflow:hidden">'
+           // Header row
+           + '<div style="background:' + mbg + ';padding:10px 14px;display:flex;align-items:center;justify-content:space-between">'
+           + '<div><span style="font-weight:700;font-size:14px">' + escHtml(cl(m.sdn_name)) + '</span>'
+           + '<span style="margin-left:8px;font-family:monospace;font-size:10px;color:var(--tx2)">' + m.sdn_id + '</span></div>'
+           + '<div style="display:flex;align-items:center;gap:8px;flex-shrink:0">'
+           + '<div style="text-align:right"><div style="font-size:26px;font-weight:800;color:' + mc + ';line-height:1">' + m.match_score + '%</div><div style="font-size:9px;color:var(--tx2)">match</div></div>'
+           + '<span class="bp ' + mb + '" style="font-size:10px">' + m.hit_type.replace(/_/g,' ') + '</span>'
+           + '</div></div>'
+           // Detail grid
+           + '<div style="padding:12px 14px;display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:12px">'
+           + '<div><div style="font-size:10px;text-transform:uppercase;letter-spacing:.4px;color:var(--tx2);margin-bottom:3px">Matched on</div><div style="font-weight:600;color:' + mc + '">' + escHtml(m.match_on) + '</div></div>'
+           + '<div><div style="font-size:10px;text-transform:uppercase;letter-spacing:.4px;color:var(--tx2);margin-bottom:3px">Entity type</div><div style="font-weight:500;text-transform:capitalize">' + m.entity_type + '</div></div>'
+           + '<div><div style="font-size:10px;text-transform:uppercase;letter-spacing:.4px;color:var(--tx2);margin-bottom:3px">Country of designation</div><div style="font-weight:500">' + (m.country||'Unknown') + (m.country_match ? ' <span style="color:var(--red);font-size:10px;font-weight:700">⚑ country match</span>' : '') + '</div></div>'
+           + '<div><div style="font-size:10px;text-transform:uppercase;letter-spacing:.4px;color:var(--tx2);margin-bottom:3px">Date of birth</div><div style="font-weight:500">' + (m.dob||'Not on record') + '</div></div>'
+           + '<div style="grid-column:span 2"><div style="font-size:10px;text-transform:uppercase;letter-spacing:.4px;color:var(--tx2);margin-bottom:5px">Sanction programs</div><div style="display:flex;flex-wrap:wrap">' + progBadges + '</div></div>'
+           + '<div style="grid-column:span 2"><div style="font-size:10px;text-transform:uppercase;letter-spacing:.4px;color:var(--tx2);margin-bottom:3px">Reason for designation</div><div style="color:var(--tx1);line-height:1.7;background:var(--bg2);padding:8px 10px;border-radius:5px">' + escHtml(m.reason) + '</div></div>'
+           + '<div><div style="font-size:10px;text-transform:uppercase;letter-spacing:.4px;color:var(--tx2);margin-bottom:3px">Date added to SDN list</div><div style="font-weight:500">' + (m.date_added||'Unknown') + '</div></div>'
+           + '<div><div style="font-size:10px;text-transform:uppercase;letter-spacing:.4px;color:var(--tx2);margin-bottom:3px">OFAC SDN reference</div><div style="font-family:monospace;font-size:11px;font-weight:600">' + m.sdn_id + '</div></div>'
+           + '</div>'
+           + '</div>';
+    }
+  }
+
+  // ── Jurisdiction risk ──────────────────────────────────────────────────────
+  var jhits = r.jurisdiction_hits || [];
+  if (jhits.length) {
+    html += '<div style="font-size:11px;font-weight:600;color:var(--tx2);margin-top:4px;margin-bottom:10px;text-transform:uppercase;letter-spacing:.6px">Jurisdiction Risk</div>';
+    for (var ji = 0; ji < jhits.length; ji++) {
+      var j   = jhits[ji];
+      var jc  = j.risk_level==='critical' ? 'var(--red)' : j.risk_level==='high' ? 'var(--orange)' : 'var(--mid)';
+      var jb  = j.risk_level==='critical' ? 'bc' : j.risk_level==='high' ? 'bh' : 'bm';
+      var jProgBadges = '';
+      var jProgs = j.programs || [];
+      for (var jp = 0; jp < jProgs.length; jp++) {
+        jProgBadges += '<span style="background:var(--navy);color:#fff;padding:1px 6px;border-radius:3px;font-size:10px;font-family:monospace;margin-right:4px;display:inline-block">' + jProgs[jp] + '</span>';
+      }
+      html += '<div style="padding:10px 14px;border-radius:6px;border:1px solid ' + jc + ';background:var(--bg2);margin-bottom:8px">'
+           + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><div style="font-weight:700;font-size:13px">' + j.jurisdiction + '</div>'
+           + '<span class="bp ' + jb + '" style="font-size:10px">' + j.risk_level.toUpperCase() + ' RISK</span></div>'
+           + '<div style="font-size:11px;color:var(--tx2)"><strong>FATF status:</strong> ' + j.fatf_status + '</div>'
+           + (jProgBadges ? '<div style="display:flex;flex-wrap:wrap;margin-top:5px">' + jProgBadges + '</div>' : '')
+           + '</div>';
+    }
+  }
+
+  // ── Clear result ───────────────────────────────────────────────────────────
+  if (r.status === 'CLEAR') {
+    html += '<div style="padding:14px;background:var(--lgreen);border-radius:6px;font-size:12px;border-left:3px solid var(--green)">'
+          + '<strong style="color:var(--green)">✓ No match found.</strong> '
+          + '<span style="color:var(--tx2)">Entity does not appear on the OFAC SDN list. Checked ' + (r.total_checked||0).toLocaleString() + ' entries.</span>'
+          + '</div>';
+  }
+
+  // ── Action required ────────────────────────────────────────────────────────
+  if (r.action_required) {
+    html += '<div style="margin-top:14px;padding:14px;background:var(--lred);border-radius:6px;border-left:4px solid var(--red)">'
+          + '<div style="font-size:13px;font-weight:700;color:var(--red);margin-bottom:6px">⚠ Immediate Action Required</div>'
+          + '<div style="font-size:12px;color:var(--tx1);line-height:1.8">'
+          + '1. <strong>Freeze the account</strong> and block all pending transactions immediately.<br>'
+          + '2. <strong>Do not tip off</strong> the customer — tipping-off is a criminal offence under BSA/AML law.<br>'
+          + '3. <strong>Escalate to Compliance Officer</strong> and Supervisor for SAR filing.<br>'
+          + '4. <strong>Document all actions</strong> in the case management system with timestamps.<br>'
+          + '5. <strong>OFAC reporting:</strong> Report to OFAC within 10 business days of blocking.'
+          + '</div></div>';
+  }
+
+  // ── Footer ─────────────────────────────────────────────────────────────────
+  html += '<div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--bdr);font-size:10px;color:var(--tx2)">Screened ' + ts + ' · ' + (r.total_checked||0).toLocaleString() + ' entries · ' + (r.list_version||'') + '</div>';
+  html += '</div>';
+
+  res.innerHTML = html;
 }
 
 // ── 5. NOTIFICATIONS ─────────────────────────────────────────────────────────
@@ -2213,35 +2710,7 @@ async function sendManualNotif() {
 // ── Register new pages in the router ─────────────────────────────────────────
 // Nav items managed in static sidebar HTML above
 
-const _prevGo = window.go;
-const _extraPages = {
-  'sar-editor':   ()=>sarEditor(),
-  'entity-graph': ()=>entityGraph(),
-  'documents':    ()=>caseDocuments(),
-  'sanctions':    ()=>sanctionsScreen(),
-  'notifications':()=>notifications(),
-};
-const _extraTitles = {
-  'sar-editor':'SAR Editor','entity-graph':'Entity Graph',
-  'documents':'Documents','sanctions':'Sanctions Screening','notifications':'Notifications',
-};
-window.go = async function(page) {
-  if(_extraPages[page]) {
-    if(window._liveFeedTimer){clearInterval(window._liveFeedTimer);window._liveFeedTimer=null;}
-    Object.values(window._chartInst||{}).forEach(c=>{try{c.destroy()}catch(e){}});
-    window._chartInst={};
-    if(window.innerWidth<=768) closeSidebar();
-    document.querySelectorAll('.ni').forEach(el=>{
-      el.classList.toggle('active', el.getAttribute('onclick')===`go('${page}')`);
-    });
-    const pt = $('page-title');
-    if(pt) pt.textContent = _extraTitles[page]||page;
-    $('content').innerHTML='<div style="padding:40px;text-align:center;color:var(--tx2)"><div class="spin"></div></div>';
-    await _extraPages[page]();
-  } else {
-    await _prevGo(page);
-  }
-};
+// Router override 1 removed — unified router at bottom of page
 </script>
 <script>
 // ═══════════════════════════════════════════════════════════════════════════
@@ -2254,25 +2723,8 @@ let _currentUser = null;
 let _userPerms = new Set();
 
 async function initAuth() {
-  if (!_authToken) { showLogin(); return; }
-  // Restore session from stored token
-  const r = await api('/api/auth/me');
-  if (r && r.user) {
-    _currentUser = r.user;
-    _userPerms   = new Set(r.permissions || []);
-    updateUserBadge();
-    // Show/hide supervisor nav
-    const supNav = document.getElementById('nav-supqueue');
-    if(supNav) supNav.style.display = _userPerms.has('file_sar') ? '' : 'none';
-    if(_userPerms.has('file_sar')) refreshSupQueueBadge();
-    // Navigate to dashboard
-    go('dashboard');
-  } else {
-    // Token invalid or expired — show login
-    _authToken = null;
-    localStorage.removeItem('aml_token');
-    showLogin();
-  }
+  // No-auth mode: always proceed directly (kept for compatibility)
+  go('dashboard');
 }
 
 function updateUserBadge() {
@@ -2288,15 +2740,16 @@ function updateUserBadge() {
 }
 
 async function doLogout() {
-  await api('/api/auth/logout', {method:'POST', body:'{}'});
-  _authToken = null; _currentUser = null; _userPerms = new Set();
-  localStorage.removeItem('aml_token');
-  showLogin();
+  // No-auth mode: just reload the page to reset state
+  window.location.reload();
 }
 
 // ── Login page ────────────────────────────────────────────────────────────────
 function showLogin() {
-  document.querySelector('.app').style.display = 'none';
+  // NO-AUTH MODE: showLogin is disabled — app always stays open
+  return;
+  // Dead code below kept for reference only
+  // no-auth: app stays visible;
   let loginDiv = $('login-page');
   if (!loginDiv) {
     loginDiv = document.createElement('div');
@@ -2495,7 +2948,8 @@ window.api = async (path, opts={}) => {
   try {
     const r = await fetch(API+path, opts);
     if (r.status === 401 && path !== '/api/auth/login') {
-      _authToken=null; localStorage.removeItem('aml_token'); showLogin(); return null;
+      // No-auth mode: ignore 401s, just return null
+      return null;
     }
     const ct = r.headers.get('Content-Type')||'';
     if(ct.includes('json')) return r.json();
@@ -2789,7 +3243,7 @@ ${(data.emerging_typologies||[]).map((e,i)=>`<p>${i+1}. <strong>${e.typology}</s
 // ── 5. USER MANAGEMENT ────────────────────────────────────────────────────────
 async function userManagement() {
   // Analysts, supervisors and admins all have access — backend filters what they see
-  if(!_authToken) { showLogin(); return; }
+  // no-auth: always accessible
   const data = await api('/api/users') || {};
   const users = data.users || [];
   const canManage = data.can_manage || _userPerms.has('manage_users');
@@ -2985,47 +3439,38 @@ async function toggle2FA(enable) {
 }
 
 // ── Register new pages ────────────────────────────────────────────────────────
-const _newPages = {
-  analytics, trends, geographic, reports,
-  users: userManagement,
-  profile: myProfile,
-};
-const _newTitles = {
-  analytics:'Executive Dashboard', trends:'Trend Analysis',
-  geographic:'Geographic Risk', reports:'Export Reports',
-  users:'User Management', profile:'My Profile',
-};
-
-const _prevGoFinal = window.go;
-window.go = async function(page) {
-  if(_newPages[page]) {
-    if(window._liveFeedTimer){clearInterval(window._liveFeedTimer);window._liveFeedTimer=null;}
-    Object.values(window._chartInst||{}).forEach(c=>{try{c.destroy()}catch(e){}});
-    window._chartInst={};
-    if(window.innerWidth<=768) closeSidebar();
-    document.querySelectorAll('.ni').forEach(el=>{
-      el.classList.toggle('active',el.getAttribute('onclick')===`go('${page}')`);
-    });
-    const pt=$('page-title'); if(pt) pt.textContent=_newTitles[page]||page;
-    $('content').innerHTML='<div style="padding:40px;text-align:center;color:var(--tx2)"><div class="spin"></div></div>';
-    // Log page navigation
-    if(_authToken) await api('/api/auth/log_action',{method:'POST',body:JSON.stringify({action:'PAGE_VIEW',target:page})});
-    await _newPages[page]();
-  } else {
-    await _prevGoFinal(page);
-  }
-};
+// Router override 2 removed — unified router at bottom of page
 
 // Add profile link to sidebar footer on click
 const sfoot = $('api-status');
 if(sfoot) sfoot.style.cursor='pointer';
 
-// ── Bootstrap ─────────────────────────────────────────────────────────────────
-// Override the original initAuth call — check auth before showing dashboard
-const _origInit = window.initAuth;
-document.addEventListener('DOMContentLoaded', ()=>{});
-// Run auth init
-initAuth();
+// ── Bootstrap — open dashboard directly, no auth required ───────────────────
+// Set a dummy user so role-based UI elements render correctly
+window._currentUser = {
+  name: 'Ransford Adjapong',
+  role: 'admin',
+  email: 'r.adjapong@fncb.com',
+  avatar: 'R',
+  color: '#7832B4',
+  department: 'AML Compliance'
+};
+window._authToken = 'demo-token-no-auth';
+window._userPerms = new Set([
+  'view_dashboard','view_alerts','investigate_alert','add_case_note',
+  'view_cases','view_documents','upload_document','view_sar_drafts',
+  'edit_sar_draft','view_entity_graph','view_sanctions','run_sanctions_screen',
+  'view_analytics','view_notifications','clear_alert','escalate_alert',
+  'create_case','update_case_status','approve_sar','file_sar',
+  'delete_document','send_notification','view_audit_log','view_all_cases',
+  'manage_users','configure_system','configure_email','trigger_retrain',
+  'view_system_health','manage_roles','export_reports','view_all_audit'
+]);
+updateUserBadge();
+// Show supervisor queue nav (admin has file_sar)
+const supNav = document.getElementById('nav-supqueue');
+if(supNav) supNav.style.display = '';
+go('dashboard');
 </script>
 <script>
 // ═══════════════════════════════════════════════════════════════════════════
@@ -3146,37 +3591,75 @@ async function ruleEngine() {
 }
 
 // Register page
-const _rulesPrevGo = window.go;
-window.go = async function(page) {
-  if (page === 'supqueue') {
-    if(window._liveFeedTimer){clearInterval(window._liveFeedTimer);window._liveFeedTimer=null;}
-    Object.values(window._chartInst||{}).forEach(c=>{try{c.destroy()}catch(e){}});
-    window._chartInst={};
-    if(window.innerWidth<=768) closeSidebar();
-    document.querySelectorAll('.ni').forEach(el=>{
-      el.classList.toggle('active', el.getAttribute('onclick')==="go('supqueue')");
-    });
-    const pt=$('page-title'); if(pt) pt.textContent='Supervisor Queue';
-    $('content').innerHTML='<div style="padding:40px;text-align:center;color:var(--tx2)"><div class="spin"></div></div>';
-    await supqueue();
-    return;
-  }
-  if (page === 'rules') {
-    if(window._liveFeedTimer){clearInterval(window._liveFeedTimer);window._liveFeedTimer=null;}
-    Object.values(window._chartInst||{}).forEach(c=>{try{c.destroy()}catch(e){}});
-    window._chartInst={};
-    if(window.innerWidth<=768) closeSidebar();
-    document.querySelectorAll('.ni').forEach(el=>{
-      el.classList.toggle('active', el.getAttribute('onclick') === "go('rules')");
-    });
-    const pt=$('page-title'); if(pt) pt.textContent='Rule Engine';
-    $('content').innerHTML='<div style="padding:40px;text-align:center;color:var(--tx2)"><div class="spin"></div></div>';
-    if(_authToken) await api('/api/auth/log_action',{method:'POST',body:JSON.stringify({action:'PAGE_VIEW',target:'rules'})});
-    await ruleEngine();
-  } else {
-    await _rulesPrevGo(page);
-  }
+// Router override 3 removed — unified router at bottom of page
+
+// ═══════════════════════════════════════════════════════════════════
+// UNIFIED ROUTER — defined last so ALL page functions are available
+// ═══════════════════════════════════════════════════════════════════
+window._goFinal = async function(page) {
+  // Stop live feed and destroy charts
+  if(window._liveFeedTimer){clearInterval(window._liveFeedTimer);window._liveFeedTimer=null;}
+  Object.values(window._chartInst||{}).forEach(function(c){try{c.destroy();}catch(e){}});
+  window._chartInst = {};
+
+  // Mobile sidebar
+  if(window.innerWidth <= 768 && window.closeSidebar) closeSidebar();
+
+  // Highlight active nav item
+  document.querySelectorAll('.ni').forEach(function(el){
+    el.classList.toggle('active', el.getAttribute('onclick') === "go('" + page + "')");
+  });
+
+  // Set page title
+  var _titles = {
+    dashboard:'Dashboard', pipeline:'ML Pipeline', models:'ML Models',
+    scorer:'Live Scorer', alerts:'Alert Queue', cases:'Case Management',
+    deployment:'Deployment', compliance:'Reg. Compliance', audit:'Audit Log',
+    sanctions:'Sanctions Screening', notifications:'Notifications',
+    analytics:'Executive Dashboard', trends:'Trend Analysis',
+    geographic:'Geographic Risk', reports:'Export Reports',
+    users:'User Management', profile:'My Profile',
+    rules:'Rule Engine', monitoring:'Model Monitoring',
+    supqueue:'Supervisor Queue', sar:'SAR Workbench',
+    'sar-editor':'SAR Editor', 'entity-graph':'Entity Graph',
+    documents:'Documents', features:'Feature Engineering',
+  };
+  var pt = document.getElementById('page-title');
+  if(pt) pt.textContent = _titles[page] || page;
+
+  // Show spinner
+  var ct = document.getElementById('content');
+  if(ct) ct.innerHTML = '<div style="padding:40px;text-align:center;color:var(--tx2)"><div class="spin"></div></div>';
+
+  // Map page key -> function name
+  var _map = {
+    dashboard:'dashboard', pipeline:'pipeline', models:'models',
+    scorer:'scorer', alerts:'alerts', cases:'cases',
+    deployment:'deployment', compliance:'compliance', audit:'audit',
+    sanctions:'sanctionsScreen', notifications:'notifications',
+    analytics:'analytics', trends:'trends', geographic:'geographic',
+    reports:'reports', users:'userManagement', profile:'myProfile',
+    rules:'ruleEngine', monitoring:'monitoring', supqueue:'supqueue',
+    sar:'sarWorkbench', 'sar-editor':'sarEditor',
+    'entity-graph':'entityGraph', documents:'caseDocuments',
+    features:'featureDetail',
+  };
+  var fnName = _map[page] || 'dashboard';
+  var fn = window[fnName] || window.dashboard;
+
+  // Log navigation (non-blocking, best-effort)
+  try {
+    if(window._authToken && window.api) {
+      api('/api/auth/log_action', {method:'POST', body:JSON.stringify({action:'PAGE_VIEW', target:page})});
+    }
+  } catch(e) {}
+
+  if(fn) await fn();
 };
+
+// Point window.go to the unified router
+window.go = window._goFinal;
+
 </script>
 </body>
 </html>
