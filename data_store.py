@@ -212,6 +212,34 @@ CASES = [
     },
 ]
 
+# ── Case History (permanent record of cleared cases — file-backed) ───────────
+import json as _json, os as _os
+
+_HISTORY_FILE = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "case_history.json")
+
+def _load_case_history():
+    """Load persisted case history from disk."""
+    try:
+        if _os.path.exists(_HISTORY_FILE):
+            with open(_HISTORY_FILE, "r") as _fh:
+                return _json.load(_fh)
+    except Exception:
+        pass
+    return []
+
+def _save_case_history(history):
+    """Persist case history to disk immediately."""
+    try:
+        with open(_HISTORY_FILE, "w") as _fh:
+            _json.dump(history, _fh, default=str, indent=2)
+    except Exception as e:
+        print(f"[WARN] Could not save case history: {e}")
+
+CASE_HISTORY = _load_case_history()
+
+# ── Escalated cases tracking ────────────────────────────────────────────────
+ESCALATED_CASES = {}  # case_id -> {escalated_by, escalated_at, supervisor, notes}
+
 # ── Audit log ────────────────────────────────────────────────────────────────
 AUDIT_LOG = [
     {"ts": _ts(hours_ago=1),  "user": "system",     "action": "ALERT_GENERATED",  "target": "ALT-2841", "detail": "ML score 94 — threshold exceeded"},
@@ -407,6 +435,123 @@ def _ingest_dataset():
     _flush_ingested_to_stores()
 
 
+def _build_case_narrative(entity, typology, score, priority, txn):
+    """Generate a proper BSA/AML investigation narrative for a case."""
+    channel    = txn.get("channel", "multiple channels")
+    tier       = txn.get("tier", "Standard")
+    juris      = txn.get("jurisdiction", "Standard")
+    vel3d      = txn.get("velocity_3d", 0)
+    vel7d      = txn.get("velocity_7d", 0)
+    prior_sars = txn.get("prior_sars", 0)
+    cp_degree  = txn.get("counterparty_degree", 0)
+    acct_age   = txn.get("account_age_days", 0)
+    cross_bdr  = txn.get("cross_border", 0)
+    multi_curr = txn.get("multi_currency", 0)
+    round_dol  = txn.get("round_dollar", 0)
+
+    # Typology-specific context paragraphs
+    ctx = {
+        "Structuring": (
+            "The transaction pattern is consistent with deliberate threshold evasion. "
+            "Multiple transactions have been identified structured just below the CTR reporting "
+            "threshold of $10,000, a federal offense under 31 U.S.C. section 5324 regardless "
+            "of whether the underlying funds are from a legitimate source."
+        ),
+        "Structuring / threshold evasion": (
+            "Multiple transactions appear deliberately structured below the Currency Transaction "
+            "Report (CTR) threshold of $10,000 across different time windows to avoid mandatory "
+            "filing obligations. This pattern of structuring is a federal offense under "
+            "31 U.S.C. section 5324."
+        ),
+        "Layering": (
+            "The entity has engaged in a series of rapid, complex fund movements across multiple "
+            "accounts and jurisdictions consistent with the layering phase of money laundering. "
+            "Funds are moved in quick succession with no apparent commercial rationale, making "
+            "the audit trail difficult to follow."
+        ),
+        "Shell Company": (
+            "Activity is consistent with use of a shell company structure to obscure beneficial "
+            "ownership. The entity exhibits characteristics typical of nominee control: minimal "
+            "operational footprint, new account activity, and transaction volumes "
+            "disproportionate to stated business purpose."
+        ),
+        "Smurfing": (
+            "Multiple sub-threshold transactions have been identified across a short time window, "
+            "consistent with a coordinated smurfing operation. The pattern suggests organised "
+            "placement of illicit funds using multiple transactions to avoid detection."
+        ),
+        "Sanctions": (
+            "Transactions indicate potential sanctions exposure. Activity involves counterparties "
+            "or payment channels with elevated OFAC/SDN risk indicators. The velocity and volume "
+            "of cross-border transfers are inconsistent with the stated risk profile."
+        ),
+        "Crypto/Virtual Assets": (
+            "The entity has engaged in rapid conversion activity consistent with crypto-based "
+            "layering, where digital asset conversion is used to break the audit trail before "
+            "funds are reintroduced to the financial system."
+        ),
+        "Trade-Based AML": (
+            "Discrepancies in trade finance payment flows indicate possible trade-based money "
+            "laundering (TBML). Over/under-invoicing patterns have been detected relative to "
+            "market benchmarks."
+        ),
+        "Fraud/Cybercrime": (
+            "Transaction patterns are consistent with proceeds of fraud or cybercrime. Rapid "
+            "outbound wire activity following large inbound credits, combined with new counterparty "
+            "relationships and high-risk jurisdictions, indicates possible mule account behaviour."
+        ),
+    }
+    context_para = ctx.get(typology,
+        "The detected activity pattern is anomalous relative to the entity peer group and "
+        "historical baseline, warranting further investigation under the institution BSA/AML programme."
+    )
+
+    # Build risk factor list
+    risk_factors = []
+    if score >= 90:
+        risk_factors.append(f"composite ML risk score of {score}/100 (critical threshold)")
+    elif score >= 75:
+        risk_factors.append(f"elevated ML risk score of {score}/100")
+    if prior_sars > 0:
+        risk_factors.append(f"{prior_sars} prior SAR filing(s) on record")
+    if vel3d > 200 or vel7d > 300:
+        risk_factors.append(f"abnormal transaction velocity ({vel3d:.0f}% 3-day, {vel7d:.0f}% 7-day vs peer baseline)")
+    if cross_bdr:
+        risk_factors.append("cross-border activity detected")
+    if multi_curr:
+        risk_factors.append("multi-currency transactions flagged")
+    if round_dol:
+        risk_factors.append("round-dollar structuring pattern")
+    if tier in ("High", "PEP"):
+        risk_factors.append(f"customer risk tier: {tier}")
+    if juris in ("High", "OFAC-adjacent", "Elevated"):
+        risk_factors.append(f"jurisdiction risk: {juris}")
+    if cp_degree > 15:
+        risk_factors.append(f"high counterparty network density ({cp_degree} counterparties)")
+    if acct_age < 90:
+        risk_factors.append(f"recently opened account ({acct_age} days old)")
+
+    risk_str = ""
+    if risk_factors:
+        risk_str = " Risk indicators: " + "; ".join(risk_factors[:4]) + "."
+
+    narrative = (
+        f"Subject entity {entity} was flagged for {typology} activity by the AI/ML ensemble "
+        f"monitoring system with a risk score of {score}/100 ({priority.upper()} priority). "
+        f"Activity was detected via {channel} channel.{risk_str}\n\n"
+        f"{context_para}\n\n"
+        f"The ML ensemble (Isolation Forest, XGBoost, GNN, LSTM) identified this entity based "
+        f"on anomalous behavioural patterns including velocity deviation, counterparty network "
+        f"analysis, and peer-group comparison. This case requires review under the institution "
+        f"BSA/AML programme. The investigating officer should: (1) obtain and review all "
+        f"transaction records; (2) conduct enhanced due diligence on identified counterparties; "
+        f"(3) assess whether a SAR should be filed with FinCEN under 31 U.S.C. section 5318(g); "
+        f"(4) determine whether account restriction is warranted. All findings must be recorded "
+        f"within 30 calendar days of case opening."
+    )
+    return narrative
+
+
 def _flush_ingested_to_stores():
     """Convert INGESTED_TRANSACTIONS into ALERTS and CASES and flush to global stores."""
     import random as _rnd; _rnd.seed(42)
@@ -446,8 +591,7 @@ def _flush_ingested_to_stores():
                 "opened":      txn["timestamp"],
                 "sar_due":     _ts(days_ago=-29 if priority == "critical" else -25),
                 "typology":    typology,
-                "narrative":   (f"Auto-generated case from dataset ingestion. "
-                                f"Entity: {entity}. Typology: {typology}. Score: {score}/100."),
+                "narrative":   _build_case_narrative(entity, typology, score, priority, txn),
                 "sar_status":  "pending" if priority in ("critical","high") else None,
             })
         else:

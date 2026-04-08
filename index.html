@@ -272,6 +272,7 @@ input:focus,select:focus{outline:2px solid var(--mid);outline-offset:1px}
     <div class="nav-sec">Investigation</div>
     <div class="ni" onclick="go('alerts')"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M8 2a5 5 0 015 5v3l1 2H2l1-2V7a5 5 0 015-5z"/><path d="M6 13a2 2 0 004 0"/></svg>Alert Queue<span class="nbadge" id="alert-count">—</span></div>
     <div class="ni" onclick="go('cases')"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2" y="3" width="12" height="11" rx="1"/><path d="M5 3V2a1 1 0 011-1h4a1 1 0 011 1v1M5 8h6M5 11h4"/></svg>Case Management<span class="nbadge g" id="case-count">—</span></div>
+    <div class="ni" onclick="go('case_history')" style="padding-left:28px"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="8" r="6"/><path d="M8 5v3l2 2"/></svg>Case History</div>
     <div class="ni" id="nav-supqueue" style="display:none" onclick="go('supqueue')"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M8 1l2 4h5l-4 3 1.5 5L8 11l-4.5 2L5 8 1 5h5z"/></svg>Supervisor Queue<span class="nbadge r" id="supqueue-count" style="display:none"></span></div>
     <div class="ni" onclick="go('entity-graph')"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="8" r="2"/><circle cx="2" cy="4" r="1.5"/><circle cx="14" cy="4" r="1.5"/><circle cx="2" cy="12" r="1.5"/><circle cx="14" cy="12" r="1.5"/><path d="M3.5 4.5L6 7M10 7l2.5-2.5M3.5 11.5L6 9M10 9l2.5 2.5"/></svg>Entity Graph</div>
     <div class="ni" onclick="go('documents')"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2" y="1" width="12" height="14" rx="1"/><path d="M5 5h6M5 8h6M5 11h3"/><path d="M9 1v4h5"/></svg>Documents</div>
@@ -373,66 +374,205 @@ async function refreshSupQueueBadge() {
 }
 
 async function supqueue() {
-  const q = await api('/api/supervisor/queue') || {};
-  const escalated = q.escalated_alerts || [];
-  const assigned  = q.assigned_alerts  || [];
-  $('content').innerHTML = `
-<div class="mrow">
-  <div class="mc"><div class="ml">Escalated alerts</div><div class="mv ${escalated.length?'r':''}">${escalated.length}</div><div class="md ${escalated.length?'r':''}">Analyst escalations pending</div></div>
-  <div class="mc"><div class="ml">Assigned to me</div><div class="mv">${assigned.length}</div><div class="md">Active workload</div></div>
-  <div class="mc"><div class="ml">My role</div><div class="mv">${_currentUser?.role||'—'}</div><div class="md">SAR filing authority</div></div>
-  <div class="mc"><div class="ml">Can file SAR</div><div class="mv" style="color:var(--green)">Yes</div><div class="md" style="color:var(--green)">FinCEN BSA e-filing</div></div>
-</div>
-${escalated.length===0 && assigned.length===0 ? `
-  <div class="card" style="padding:40px;text-align:center">
-    <div style="font-size:32px;margin-bottom:12px">✓</div>
-    <div style="font-size:14px;font-weight:500">Queue is clear</div>
-    <div style="font-size:13px;color:var(--tx2);margin-top:6px">No escalated alerts pending your review</div>
-  </div>` : ''}
-${escalated.length>0 ? `
-  <div class="card" style="margin-bottom:14px;border-top:3px solid var(--orange)">
-    <div class="ch"><span class="ct" style="color:var(--orange)">⚠ Escalated from Analysts — Action Required</span></div>
-    <table><thead><tr><th>Alert ID</th><th>Entity</th><th>Score</th><th>Typology</th><th>Amount</th><th>Escalated by</th><th>Reason</th><th>Date</th><th>Actions</th></tr></thead><tbody>
-    ${escalated.map(a=>`<tr style="background:var(--lred)">
-      <td style="font-family:monospace;font-size:11px;font-weight:600">${a.id}</td>
-      <td style="font-weight:500">${a.entity}</td>
-      <td style="font-weight:700;color:var(--red);font-size:15px">${a.score}</td>
-      <td style="font-size:11px">${a.typology||'—'}</td>
-      <td style="font-weight:500">$\${Number(a.amount||0).toLocaleString('en-US',{maximumFractionDigits:0})}</td>
-      <td style="font-size:12px">${a.escalated_by||'—'}</td>
-      <td style="font-size:11px;color:var(--tx2);max-width:160px;overflow:hidden;text-overflow:ellipsis">${a.escalation_notes||'—'}</td>
-      <td style="font-size:11px;color:var(--tx2)">${(a.escalated_at||'').split(' ')[0]||'—'}</td>
-      <td style="white-space:nowrap;display:flex;gap:4px;padding:8px 6px">
-        <button class="btn" style="font-size:10px;padding:2px 7px" onclick="_detailAlertId='${a.id}';go('alerts')">Review</button>
-        <button class="btn primary" style="font-size:10px;padding:2px 7px" onclick="showAssignDialog('${a.id}')">Assign</button>
-        <button class="btn success" style="font-size:10px;padding:2px 7px" onclick="sqTake('${a.id}')">Take it</button>
-      </td>
-    </tr>`).join('')}
-    </tbody></table>
-  </div>` : ''}
-${assigned.length>0 ? `
-  <div class="card" style="border-top:3px solid var(--blue)">
-    <div class="ch"><span class="ct">Assigned to Me</span><span style="font-size:11px;color:var(--tx2)">${assigned.length} active</span></div>
-    <table><thead><tr><th>Alert ID</th><th>Entity</th><th>Score</th><th>Typology</th><th>Amount</th><th>Status</th><th>Actions</th></tr></thead><tbody>
-    ${assigned.map(a=>`<tr>
-      <td style="font-family:monospace;font-size:11px">${a.id}</td>
-      <td style="font-weight:500">${a.entity}</td>
-      <td style="font-weight:700;color:${sc(a.score)}">${a.score}</td>
-      <td style="font-size:11px">${a.typology||'—'}</td>
-      <td style="font-weight:500">$\${Number(a.amount||0).toLocaleString('en-US',{maximumFractionDigits:0})}</td>
-      <td>${sb(a.status)}</td>
-      <td style="display:flex;gap:4px;padding:8px 6px">
-        <button class="btn" style="font-size:10px;padding:2px 7px" onclick="_detailAlertId='${a.id}';go('alerts')">Review →</button>
-        <button class="btn" style="font-size:10px;padding:2px 7px" onclick="showAssignDialog('${a.id}')">Reassign</button>
-      </td>
-    </tr>`).join('')}
-    </tbody></table>
-  </div>` : ''}`;
-  window.sqTake = async function(alertId){
-    await alertAction(alertId,'assign',{assignee:_currentUser?.name||''});
-    supqueue();
-  };
-  refreshSupQueueBadge();
+  // Load both alert queue AND escalated cases
+  const [q, cq] = await Promise.all([
+    api('/api/supervisor/queue') || {},
+    api('/api/supervisor/cases') || {}
+  ]);
+  const escalated   = (q || {}).escalated_alerts || [];
+  const assigned    = (q || {}).assigned_alerts  || [];
+  const filedAlerts = (q || {}).filed_alerts     || [];
+  const escCases    = (cq || {}).cases || [];
+
+  var container = document.createElement("div");
+
+  // Metrics row
+  var filedAlertsCount = filedAlerts.length;
+  var metricsHtml = '<div class="mrow" style="margin-bottom:18px">'
+    + '<div class="mc"><div class="ml">Escalated cases</div><div class="mv' + (escCases.length?" r":"") + '">' + escCases.length + '</div><div class="md' + (escCases.length?" r":"") + '">Awaiting supervisor review</div></div>'
+    + '<div class="mc"><div class="ml">Pending escalations</div><div class="mv' + (escalated.length?" r":"") + '">' + escalated.length + '</div><div class="md' + (escalated.length?" r":"") + '">From analyst escalations</div></div>'
+    + '<div class="mc"><div class="ml">Filed alerts</div><div class="mv" style="color:#1EA064">' + filedAlertsCount + '</div><div class="md">SAR filed with FinCEN</div></div>'
+    + '<div class="mc"><div class="ml">Assigned to me</div><div class="mv">' + assigned.length + '</div><div class="md">Active workload</div></div>'
+    + '</div>';
+
+  // ── Escalated Cases section ───────────────────────────────────────────────
+  var casesSection = document.createElement("div");
+  casesSection.className = "card";
+  casesSection.style.marginBottom = "16px";
+
+  var caseRows = "";
+  if (escCases.length) {
+    escCases.forEach(function(c) {
+      var sc2 = (c.score||0)>=90?"#E24B4A":(c.score||0)>=70?"#E67E22":"#1EA064";
+      var escBy = c.escalated_by || c.officer || "—";
+      var escAt = c.escalated_at ? new Date(c.escalated_at).toLocaleString("en-GB",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"}) : "—";
+      caseRows += '<tr data-caseid="' + c.id + '" style="cursor:pointer;border-bottom:1px solid var(--bdr)">'
+        + '<td style="padding:10px 8px;font-family:monospace;font-size:11px">' + c.id + (c.manual_sar ? ' <span style="background:rgba(186,117,23,0.2);color:#E67E22;border:1px solid rgba(186,117,23,0.3);border-radius:10px;padding:1px 7px;font-size:10px;font-weight:600">Manual SAR</span>' : '') + '</td>'
+        + '<td style="padding:10px 8px;font-weight:500">' + (c.entity||"—") + '</td>'
+        + '<td style="padding:10px 8px"><span style="background:rgba(231,126,34,0.12);color:#E67E22;border-radius:4px;padding:2px 7px;font-size:11px">' + (c.typology||"—") + '</span></td>'
+        + '<td style="padding:10px 8px;font-weight:700;color:' + sc2 + '">' + (c.score||"—") + '</td>'
+        + '<td style="padding:10px 8px;font-size:12px">' + escBy + '</td>'
+        + '<td style="padding:10px 8px;font-size:11px;color:var(--tx2)">' + escAt + '</td>'
+        + '<td style="padding:10px 8px">'
+        + '<button class="btn primary" style="font-size:11px;padding:3px 9px" data-action="file_sar" data-cid="' + c.id + '">File SAR</button> '
+        + '<button class="btn" style="font-size:11px;padding:3px 9px;color:#1EA064;border-color:rgba(30,164,100,0.4)" data-action="return_case" data-cid="' + c.id + '" data-officer="' + escBy + '">&#8617; Return</button> '
+        + '<button class="btn" style="font-size:11px;padding:3px 9px;color:#E24B4A;border-color:rgba(226,75,74,0.3)" data-action="clear_case" data-cid="' + c.id + '">Clear</button>'
+        + '</td>'
+        + '</tr>';
+    });
+  } else {
+    caseRows = '<tr><td colspan="7" style="padding:24px;text-align:center;color:var(--tx2);font-size:13px">No cases awaiting supervisor review</td></tr>';
+  }
+
+  casesSection.innerHTML = '<div class="ch"><span class="ct">Cases awaiting supervisor review</span>'
+    + '<span style="font-size:11px;color:var(--tx2);margin-left:8px">\xb7 Escalated by officers</span></div>'
+    + '<div class="cb" style="padding:0">'
+    + '<table style="width:100%;border-collapse:collapse">'
+    + '<thead><tr style="border-bottom:1px solid var(--bdr)">'
+    + '<th style="padding:8px;text-align:left;font-size:11px;color:var(--tx2);font-weight:500">Case ID</th>'
+    + '<th style="padding:8px;text-align:left;font-size:11px;color:var(--tx2);font-weight:500">Entity</th>'
+    + '<th style="padding:8px;text-align:left;font-size:11px;color:var(--tx2);font-weight:500">Typology</th>'
+    + '<th style="padding:8px;text-align:left;font-size:11px;color:var(--tx2);font-weight:500">Score</th>'
+    + '<th style="padding:8px;text-align:left;font-size:11px;color:var(--tx2);font-weight:500">Escalated by</th>'
+    + '<th style="padding:8px;text-align:left;font-size:11px;color:var(--tx2);font-weight:500">Time</th>'
+    + '<th style="padding:8px;text-align:left;font-size:11px;color:var(--tx2);font-weight:500">Actions</th>'
+    + '</tr></thead>'
+    + '<tbody>' + caseRows + '</tbody></table></div>';
+
+  // ── Filed Alerts section ────────────────────────────────────────────────────
+  var alertsSection = document.createElement("div");
+  alertsSection.className = "card";
+  // Show only filed alerts (SAR has been filed by supervisor)
+  // filedAlerts comes directly from API — already filtered server-side
+  var alertRows = "";
+  if (filedAlerts.length) {
+    filedAlerts.forEach(function(a) {
+      var sc2 = (a.score||0)>=90?"#E24B4A":(a.score||0)>=70?"#E67E22":"#1EA064";
+      var p = 'padding:9px 8px';
+      alertRows += '<tr>'
+        + '<td style="' + p + ';font-family:monospace;font-size:11px">' + a.id + '</td>'
+        + '<td style="' + p + ';font-weight:500">' + (a.entity||'—') + '</td>'
+        + '<td style="' + p + ';font-size:12px">' + (a.typology||'—') + '</td>'
+        + '<td style="' + p + ';font-weight:700;color:' + sc2 + '">' + (a.score||'—') + '</td>'
+        + '<td style="' + p + '">' + pb(a.priority||'low') + '</td>'
+        + '<td style="' + p + ';font-size:11px;color:#1EA064;font-weight:500">&#10003; SAR Filed</td>'
+        + '<td style="' + p + ';font-size:11px;color:var(--tx2)">' + (a.escalated_by||a.officer||'—') + '</td>'
+        + '<td style="' + p + '"><button class="btn" style="font-size:10px;padding:2px 8px" data-view-sar="' + a.id + '" data-entity="' + (a.entity||'') + '" data-typo="' + (a.typology||'') + '" data-score="' + (a.score||'') + '" data-fincen="' + (a.fincen_ref||'pending') + '" data-filed-date="' + (a.filed_date||'') + '" data-filed-by="' + (a.escalated_by||a.officer||'Supervisor') + '">&#128196; View SAR</button></td>'
+        + '</tr>';
+    });
+  } else {
+    alertRows = '<tr><td colspan="7" style="padding:24px;text-align:center;color:var(--tx2);font-size:13px">No filed alerts yet. SAR-filed alerts will appear here.</td></tr>';
+  }
+  alertsSection.innerHTML = '<div class="ch"><span class="ct">Filed Alerts</span>'
+    + '<span style="font-size:11px;color:var(--tx2);margin-left:8px">· SAR filed with FinCEN</span></div>'
+    + '<div class="cb" style="padding:0">'
+    + '<table style="width:100%;border-collapse:collapse">'
+    + '<thead><tr style="border-bottom:1px solid var(--bdr)">'
+    + '<th style="padding:8px;text-align:left;font-size:11px;color:var(--tx2);font-weight:500">Alert ID</th>'
+    + '<th style="padding:8px;text-align:left;font-size:11px;color:var(--tx2);font-weight:500">Entity</th>'
+    + '<th style="padding:8px;text-align:left;font-size:11px;color:var(--tx2);font-weight:500">Typology</th>'
+    + '<th style="padding:8px;text-align:left;font-size:11px;color:var(--tx2);font-weight:500">Score</th>'
+    + '<th style="padding:8px;text-align:left;font-size:11px;color:var(--tx2);font-weight:500">Priority</th>'
+    + '<th style="padding:8px;text-align:left;font-size:11px;color:var(--tx2);font-weight:500">SAR Status</th>'
+    + '<th style="padding:8px;text-align:left;font-size:11px;color:var(--tx2);font-weight:500">Filed by</th>'
+    + '<th style="padding:8px"></th>'
+    + '</tr></thead>'
+    + '<tbody>' + alertRows + '</tbody></table></div>';
+
+
+  container.innerHTML = metricsHtml;
+  container.appendChild(casesSection);
+  container.appendChild(alertsSection);
+
+  var ct = document.getElementById("content");
+  ct.innerHTML = "";
+  ct.appendChild(container);
+
+  // ── Wire up supervisor action buttons ─────────────────────────────────────
+  document.querySelectorAll("[data-action]").forEach(function(btn) {
+    btn.onclick = function(e) {
+      e.stopPropagation();
+      var action = btn.getAttribute("data-action");
+      var cid    = btn.getAttribute("data-cid");
+      var origOfficer = btn.getAttribute("data-officer") || "Officer";
+
+      if (action === "file_sar") {
+        if (!confirm("File SAR with FinCEN for case " + cid + "? This cannot be undone.")) return;
+        var officer = (_currentUser||{}).name || "Supervisor";
+        api("/api/cases/" + cid + "/supervisor_action", {method:"POST", body:JSON.stringify({action:"file_sar", officer})}).then(function(r) {
+          if (r && r.ok) { toast("SAR filed \u2014 FinCEN ref: " + (r.fincen_ref||"pending")); supqueue(); }
+          else toast("SAR filing failed", "error");
+        });
+      } else if (action === "return_case") {
+        var notes = prompt("Return case " + cid + " to " + origOfficer + ".\nAdd a note (optional):", "");
+        if (notes === null) return; // cancelled
+        var officer = (_currentUser||{}).name || "Supervisor";
+        api("/api/cases/" + cid + "/supervisor_action", {method:"POST", body:JSON.stringify({action:"return", officer, notes})}).then(function(r) {
+          if (r && r.ok) { toast("Case " + cid + " returned to " + origOfficer); supqueue(); }
+          else toast("Return failed", "error");
+        });
+      } else if (action === "clear_case") {
+        var reason = prompt("Clear case " + cid + " without SAR?\nReason:", "No suspicious activity — cleared by supervisor");
+        if (reason === null) return;
+        var officer = (_currentUser||{}).name || "Supervisor";
+        api("/api/cases/" + cid + "/supervisor_action", {method:"POST", body:JSON.stringify({action:"clear", officer, notes:reason})}).then(function(r) {
+          if (r && r.ok) { toast("Case " + cid + " cleared"); supqueue(); }
+          else toast("Clear failed", "error");
+        });
+      }
+    };
+  });
+
+  // Row click — open case detail
+  document.querySelectorAll("[data-caseid]").forEach(function(row) {
+    row.onclick = function(e) {
+      if (e.target.tagName === "BUTTON") return;
+      openCase(row.getAttribute("data-caseid"));
+    };
+    row.onmouseover = function(){ this.style.background = "var(--bg2)"; };
+    row.onmouseout  = function(){ this.style.background = ""; };
+  });
+
+  // View SAR button — read-only SAR detail modal
+  document.querySelectorAll("[data-view-sar]").forEach(function(btn) {
+    btn.onclick = function(e) {
+      e.stopPropagation();
+      var alertId  = btn.getAttribute("data-view-sar");
+      var entity   = btn.getAttribute("data-entity")    || "Unknown";
+      var typo     = btn.getAttribute("data-typo")      || "Unknown";
+      var score    = btn.getAttribute("data-score")     || "—";
+      var fincen   = btn.getAttribute("data-fincen")    || "Pending";
+      var filedDate= btn.getAttribute("data-filed-date")|| "—";
+      var filedBy  = btn.getAttribute("data-filed-by")  || "Supervisor";
+
+      var modal = document.createElement("div");
+      modal.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:999;display:flex;align-items:center;justify-content:center";
+      modal.innerHTML = '<div style="background:var(--bg1);border-radius:12px;padding:28px;width:500px;max-height:80vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.5)">'
+        + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">'
+        + '<div><div style="font-size:16px;font-weight:700">SAR Filing Record</div>'
+        + '<div style="font-size:12px;color:var(--tx2);margin-top:2px">Alert ' + alertId + ' \xb7 Read-only</div></div>'
+        + '<span style="background:rgba(30,164,100,0.15);color:#1EA064;border:1px solid rgba(30,164,100,0.3);border-radius:20px;padding:4px 12px;font-size:12px;font-weight:600">&#10003; SAR Filed</span>'
+        + '</div>'
+        + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:20px">'
+        + '<div><div class="det-title">FinCEN Reference</div><div style="font-size:14px;font-weight:700;color:#1EA064;font-family:monospace">' + fincen + '</div></div>'
+        + '<div><div class="det-title">Filed Date</div><div style="font-size:13px">' + filedDate + '</div></div>'
+        + '<div><div class="det-title">Entity</div><div style="font-size:13px;font-weight:600">' + entity + '</div></div>'
+        + '<div><div class="det-title">Alert ID</div><div style="font-size:13px;font-family:monospace">' + alertId + '</div></div>'
+        + '<div><div class="det-title">Typology</div><div style="font-size:12px">' + typo + '</div></div>'
+        + '<div><div class="det-title">Risk Score</div><div style="font-size:13px;font-weight:700;color:#E24B4A">' + score + '/100</div></div>'
+        + '<div><div class="det-title">Filed by</div><div style="font-size:13px">' + filedBy + '</div></div>'
+        + '<div><div class="det-title">Filing type</div><div style="font-size:12px">FinCEN SAR (Form 111)</div></div>'
+        + '</div>'
+        + '<div style="background:rgba(30,164,100,0.08);border:1px solid rgba(30,164,100,0.2);border-radius:8px;padding:12px;font-size:12px;color:var(--tx2);line-height:1.6;margin-bottom:20px">'
+        + '<strong style="color:#1EA064">BSA e-Filing Complete.</strong> This Suspicious Activity Report has been submitted to FinCEN under 31 U.S.C. section 5318(g). Retain all supporting documentation for a minimum of 5 years per BSA recordkeeping requirements.'
+        + '</div>'
+        + '<div style="display:flex;justify-content:flex-end">'
+        + '<button class="btn" onclick="this.closest(&quot;div[style*=fixed]&quot;).remove()">Close</button>'
+        + '</div></div>';
+      document.body.appendChild(modal);
+      modal.onclick = function(ev){ if(ev.target===modal) modal.remove(); };
+    };
+  });
 }
 
 async function api(path, opts={}) {
@@ -449,7 +589,7 @@ const TITLES = {
   dashboard:'Dashboard',
   pipeline:'Data Pipeline',models:'ML Models',scorer:'Live Scorer',monitoring:'Model Monitoring',
   alerts:'Alert Queue',cases:'Case Management','entity-graph':'Entity Graph',documents:'Documents',
-  sar:'SAR Workbench','sar-editor':'SAR Editor',features:'Feature Engineering',
+  sar:'SAR Workbench', case_history:'Case History','sar-editor':'SAR Editor',features:'Feature Engineering',
   sanctions:'Sanctions Screening',compliance:'Reg. Compliance',
   deployment:'Deployment',notifications:'Notifications',audit:'Audit Log'
 };
@@ -742,85 +882,314 @@ async function alerts() {
   if(_detailAlertId) { await alertDetail(_detailAlertId); return; }
   const data = await api('/api/alerts') || {};
   const rows = data.alerts || [];
-  $('alert-count').textContent = rows.filter(a=>a.status==='open').length;
-  $('content').innerHTML = `
-<div class="mrow">
-  <div class="mc"><div class="ml">Open alerts</div><div class="mv">${rows.filter(a=>a.status==='open').length}</div><div class="md r">${rows.filter(a=>a.priority==='critical').length} critical</div></div>
-  <div class="mc"><div class="ml">Avg. score (open)</div><div class="mv">${Math.round(rows.filter(a=>a.status==='open').reduce((s,a)=>s+a.score,0)/Math.max(1,rows.filter(a=>a.status==='open').length))}</div><div class="md">↑ vs yesterday</div></div>
-  <div class="mc"><div class="ml">Cleared today</div><div class="mv">31</div><div class="md">FP suppression active</div></div>
-  <div class="mc"><div class="ml">SAR pending</div><div class="mv">2</div><div class="md r">30-day deadline</div></div>
-</div>
-<div class="card"><div class="ch"><span class="ct">Alert queue</span></div>
-<table><thead><tr><th>Alert ID</th><th>Entity</th><th>Amount</th><th>Risk score</th><th>Typology</th><th>Priority</th><th>Status</th><th>Time</th><th></th></tr></thead><tbody>
-${rows.map(a=>`<tr>
-  <td style="font-family:monospace;font-size:11px">${a.id}</td>
-  <td style="font-weight:500">${a.entity}</td>
-  <td style="font-weight:600">${fmt(a.amount)}</td>
-  <td><div style="display:flex;align-items:center;gap:7px"><span style="font-weight:700;color:${sc(a.score)};min-width:26px">${a.score}</span><div style="width:50px"><div class="rb"><div class="rf" style="width:${a.score}%;background:${sc(a.score)}"></div></div></div></div></td>
-  <td style="font-size:11px">${a.typology}</td>
-  <td>${pb(a.priority)}</td><td>${sb(a.status)}</td>
-  <td style="font-size:11px;color:var(--tx2)">${a.timestamp?.split(' ')[1]||''}</td>
-  <td><button class="btn" onclick="openAlertDetail('${a.id}')" style="font-size:11px;padding:3px 9px">Investigate →</button></td>
-</tr>`).join('')}
-</tbody></table></div>`;
+
+  // Status counts
+  const aOpen     = rows.filter(a=>a.status==='open').length;
+  const aReview   = rows.filter(a=>a.status==='review').length;
+  const aFiled    = rows.filter(a=>a.status==='filed').length;
+  const aCleared  = rows.filter(a=>a.status==='cleared').length;
+  const aCritical = rows.filter(a=>a.priority==='critical').length;
+  const avgScore  = Math.round(rows.filter(a=>a.status==='open').reduce((s,a)=>s+a.score,0)/Math.max(1,aOpen));
+  const sarPend   = rows.filter(a=>a.status==='open'&&a.priority==='critical').length;
+
+  $('alert-count').textContent = aOpen;
+
+  window._alertFilter = window._alertFilter || 'all';
+
+  function renderAlertTable(filter) {
+    window._alertFilter = filter;
+    const filtered = filter==='all'     ? rows :
+                     filter==='open'    ? rows.filter(a=>a.status==='open') :
+                     filter==='review'  ? rows.filter(a=>a.status==='review') :
+                     filter==='filed'   ? rows.filter(a=>a.status==='filed') :
+                     filter==='closed'  ? rows.filter(a=>a.status==='cleared'||a.status==='closed') :
+                     rows;
+
+    // Update tab active states
+    ['all','open','review','filed','closed'].forEach(function(t) {
+      var el = document.getElementById('atab-'+t);
+      if (el) {
+        el.style.background  = (filter===t) ? 'var(--accent)' : 'transparent';
+        el.style.color       = (filter===t) ? '#fff' : 'var(--tx2)';
+        el.style.borderColor = (filter===t) ? 'var(--accent)' : 'var(--bdr)';
+      }
+    });
+
+    var tbody = document.getElementById('alerts-tbody');
+    if (!tbody) return;
+    if (!filtered.length) {
+      tbody.innerHTML = '<tr><td colspan="9" style="padding:32px;text-align:center;color:var(--tx2);font-size:13px">No alerts in this category.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = filtered.map(function(a) {
+      return '<tr style="border-bottom:1px solid var(--bdr)">'
+        + '<td style="padding:10px;font-family:monospace;font-size:11px">' + a.id + '</td>'
+        + '<td style="padding:10px;font-weight:500">' + a.entity + '</td>'
+        + '<td style="padding:10px;font-weight:600">' + fmt(a.amount) + '</td>'
+        + '<td style="padding:10px"><div style="display:flex;align-items:center;gap:7px">'
+          + '<span style="font-weight:700;color:' + sc(a.score) + ';min-width:26px">' + a.score + '</span>'
+          + '<div style="width:50px"><div class="rb"><div class="rf" style="width:' + a.score + '%;background:' + sc(a.score) + '"></div></div></div>'
+        + '</div></td>'
+        + '<td style="padding:10px;font-size:11px">' + a.typology + '</td>'
+        + '<td style="padding:10px">' + pb(a.priority) + '</td>'
+        + '<td style="padding:10px">' + sb(a.status) + '</td>'
+        + '<td style="padding:10px;font-size:11px;color:var(--tx2)">' + ((a.timestamp||'').split(' ')[1]||'') + '</td>'
+        + '<td style="padding:10px"><button class="btn" onclick="openAlertDetail(\'' + a.id + '\')" style="font-size:11px;padding:3px 9px">Investigate &rarr;</button></td>'
+        + '</tr>';
+    }).join('');
+  }
+
+  var container = document.createElement('div');
+
+  // Metrics row
+  var mrow = document.createElement('div');
+  mrow.className = 'mrow';
+  mrow.style.marginBottom = '16px';
+  mrow.innerHTML =
+    '<div class="mc" style="cursor:pointer" id="amc-open">'
+      + '<div class="ml">Open alerts</div>'
+      + '<div class="mv' + (aCritical?' r':'') + '">' + aOpen + '</div>'
+      + '<div class="md r">' + aCritical + ' critical</div>'
+    + '</div>'
+    + '<div class="mc" style="cursor:pointer" id="amc-review">'
+      + '<div class="ml">In review</div>'
+      + '<div class="mv">' + aReview + '</div>'
+      + '<div class="md">Under investigation</div>'
+    + '</div>'
+    + '<div class="mc" style="cursor:pointer" id="amc-filed">'
+      + '<div class="ml">Filed (SAR)</div>'
+      + '<div class="mv" style="color:#1EA064">' + aFiled + '</div>'
+      + '<div class="md">FinCEN e-filing complete</div>'
+    + '</div>'
+    + '<div class="mc" style="cursor:pointer" id="amc-closed">'
+      + '<div class="ml">Closed / Cleared</div>'
+      + '<div class="mv" style="color:#9a9a96">' + aCleared + '</div>'
+      + '<div class="md">No action required</div>'
+    + '</div>'
+    + '<div class="mc">'
+      + '<div class="ml">Avg. score (open)</div>'
+      + '<div class="mv">' + avgScore + '</div>'
+      + '<div class="md">ML ensemble score</div>'
+    + '</div>';
+  container.appendChild(mrow);
+
+  // Alert card with filter tabs
+  var card = document.createElement('div');
+  card.className = 'card';
+
+  var tabs = [
+    {id:'all',    label:'All (' + rows.length + ')'},
+    {id:'open',   label:'Open (' + aOpen + ')'},
+    {id:'review', label:'Review (' + aReview + ')'},
+    {id:'filed',  label:'Filed (' + aFiled + ')'},
+    {id:'closed', label:'Closed (' + aCleared + ')'},
+  ];
+  var tabsHtml = '<div style="display:flex;align-items:center;gap:6px;margin-bottom:14px;flex-wrap:wrap">'
+    + '<span style="font-size:13px;font-weight:600;margin-right:4px">Alert queue</span>';
+  tabs.forEach(function(t) {
+    tabsHtml += '<button id="atab-' + t.id + '" onclick="window._renderAlertTable(\'' + t.id + '\')" '
+      + 'style="border:1px solid var(--bdr);border-radius:20px;padding:4px 12px;font-size:11px;cursor:pointer;background:transparent;color:var(--tx2);transition:all 0.15s">'
+      + t.label + '</button>';
+  });
+  tabsHtml += '</div>';
+
+  card.innerHTML = '<div class="ch"><span class="ct">Alert queue</span></div>'
+    + '<div class="cb" style="padding:12px">'
+    + tabsHtml
+    + '<div style="overflow-x:auto">'
+    + '<table style="width:100%;border-collapse:collapse">'
+    + '<thead><tr style="border-bottom:1px solid var(--bdr)">'
+    + '<th style="padding:8px 10px;text-align:left;font-size:11px;color:var(--tx2);font-weight:500">ALERT ID</th>'
+    + '<th style="padding:8px 10px;text-align:left;font-size:11px;color:var(--tx2);font-weight:500">ENTITY</th>'
+    + '<th style="padding:8px 10px;text-align:left;font-size:11px;color:var(--tx2);font-weight:500">AMOUNT</th>'
+    + '<th style="padding:8px 10px;text-align:left;font-size:11px;color:var(--tx2);font-weight:500">RISK SCORE</th>'
+    + '<th style="padding:8px 10px;text-align:left;font-size:11px;color:var(--tx2);font-weight:500">TYPOLOGY</th>'
+    + '<th style="padding:8px 10px;text-align:left;font-size:11px;color:var(--tx2);font-weight:500">PRIORITY</th>'
+    + '<th style="padding:8px 10px;text-align:left;font-size:11px;color:var(--tx2);font-weight:500">STATUS</th>'
+    + '<th style="padding:8px 10px;text-align:left;font-size:11px;color:var(--tx2);font-weight:500">TIME</th>'
+    + '<th style="padding:8px 10px"></th>'
+    + '</tr></thead>'
+    + '<tbody id="alerts-tbody"></tbody>'
+    + '</table></div></div>';
+
+  container.appendChild(card);
+
+  var ct = document.getElementById('content');
+  ct.innerHTML = '';
+  ct.appendChild(container);
+
+  // Expose render function globally for tab clicks
+  window._renderAlertTable = renderAlertTable;
+
+  // Metric card clicks filter
+  ['open','review','filed','closed'].forEach(function(status) {
+    var mc = document.getElementById('amc-' + status);
+    if (mc) mc.onclick = function(){ renderAlertTable(status); };
+  });
+
+  // Initial render
+  renderAlertTable(window._alertFilter || 'all');
 }
 
 function openAlertDetail(id){ _detailAlertId=id; go('alerts'); }
 
 async function alertDetail(id) {
-  const a = await api(`/api/alerts/${id}`) || {};
-  $('content').innerHTML = `
-<div style="display:flex;align-items:center;gap:8px;margin-bottom:14px">
-  <button class="btn" onclick="_detailAlertId=null;go('alerts')">← Back</button>
-  <span style="font-family:monospace;font-size:13px;font-weight:500">${a.id}</span>
-  ${pb(a.priority||'low')} ${sb(a.status||'open')}
-</div>
-<div class="g2">
-<div>
-<div class="card" style="margin-bottom:14px"><div class="ch"><span class="ct">Alert summary</span></div><div class="cb">
-  <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:10px">
-    <div style="font-size:42px;font-weight:500;color:${sc(a.score||0)}">${a.score||'—'}</div>
-    <div><div style="font-size:14px;font-weight:500">${a.entity}</div><div style="font-size:12px;color:var(--tx2)">${a.typology} · ${a.channel}</div></div>
-  </div>
-  <div class="rb" style="height:7px;margin-bottom:14px"><div class="rf" style="width:${a.score||0}%;background:${sc(a.score||0)}"></div></div>
-  <div class="det-title">Model votes</div>
-  ${Object.entries(a.model_scores||{}).map(([k,v])=>`<div style="display:flex;align-items:center;gap:7px;margin-bottom:6px;font-size:12px">
-    <span style="flex:0 0 130px;color:var(--tx2)">${{iso:'Isolation Forest',xgb:'XGBoost',gnn:'Graph NN proxy',lstm:'RF temporal proxy'}[k]||k}</span>
-    <div style="flex:1;height:5px;background:var(--g1);border-radius:3px"><div style="height:100%;width:${v}%;background:${sc(v)};border-radius:3px"></div></div>
-    <span style="font-weight:700;color:${sc(v)};min-width:28px">${v}</span></div>`).join('')}
-  <div class="btn-row" id="alert-action-btns">
-    ${_userPerms.has('create_case') ? `<button class="btn success" onclick="alertAction('${a.id}','create_case')">Create SAR case</button>` : ''}
-    ${_userPerms.has('clear_alert') ? `<button class="btn danger" onclick="alertAction('${a.id}','clear')">Clear (false positive)</button>` : ''}
-    ${!_userPerms.has('file_sar') && _userPerms.has('investigate_alert') ? `<button class="btn warn" onclick="showEscalateDialog('${a.id}')">↑ Escalate to supervisor</button>` : ''}
-    ${_userPerms.has('file_sar') && a.status==='escalated' ? `<button class="btn primary" onclick="showAssignDialog('${a.id}')">Assign to officer</button>` : ''}
-    ${_userPerms.has('file_sar') && a.status!=='escalated' ? `<button class="btn primary" onclick="showAssignDialog('${a.id}')">Assign</button>` : ''}
-  </div>
-  ${a.escalated ? `<div style="margin-top:8px;padding:9px;background:var(--lred);border-radius:6px;font-size:12px">
-    <strong style="color:var(--red)">↑ Escalated</strong> by ${a.escalated_by||'analyst'} on ${(a.escalated_at||'').split(' ')[0]}
-    ${a.escalation_notes ? `· "${a.escalation_notes}"` : ''}
-  </div>` : ''}
-  ${a.notes?`<div style="margin-top:10px;padding:9px;background:var(--bg2);border-radius:6px;font-size:12px;color:var(--tx2)">${a.notes}</div>`:''}
-</div></div>
-<div class="card"><div class="ch"><span class="ct">Linked transactions</span></div><div class="cb">
-  ${(a.transactions||[]).map(t=>`<div class="txnr">
-    <span style="color:${t.dir==='in'?'var(--green)':'var(--mid)'}">${t.dir==='in'?'▼':'▲'}</span>
-    <span style="flex:1">${t.desc}</span>
-    <span class="txna" style="color:${t.amount<0?'var(--red)':'var(--green)'}">${t.amount<0?'−':'+'} ${fmt(Math.abs(t.amount))}</span>
-  </div>`).join('')}
-</div></div>
-</div>
-<div>
-<div class="card"><div class="ch"><span class="ct">SHAP feature attribution</span><span style="font-size:11px;color:var(--tx2)">XGBoost explainability</span></div><div class="cb">
-  <div style="font-size:11px;color:var(--tx2);margin-bottom:12px">Blue = raises risk · Orange = lowers risk</div>
-  ${(a.shap||[]).map(s=>`<div class="shap-row">
-    <span class="sl">${s.label}</span>
-    <div class="sbw">${s.shap>0?`<div class="sp" style="width:${Math.min(100,Math.abs(s.shap)*200)}%"></div>`:`<div class="sn" style="width:${Math.min(100,Math.abs(s.shap)*200)}%"></div>`}</div>
-    <span class="sv" style="color:${s.shap>0?'var(--mid)':'var(--orange)'}">${s.shap>0?'+':''}${s.shap.toFixed(3)}</span>
-  </div>`).join('')}
-  <div style="font-size:10px;color:var(--tx2);margin-top:10px;padding-top:8px;border-top:1px solid var(--bdr)">Generated by SHAP · XGBoost base model · Live from ML engine</div>
-</div></div>
-</div>
-</div>`;
+  const [a, txData] = await Promise.all([
+    api("/api/alerts/" + id) || {},
+    api("/api/alerts/" + id + "/transactions") || {}
+  ]);
+
+  var flaggedTxns = txData.flagged || [];
+  var contextTxns = txData.context || [];
+  var totalTxns   = txData.total_txns || 0;
+
+  // ── Build page via DOM ────────────────────────────────────────────────────
+  var container = document.createElement("div");
+
+  // Header
+  var hdr = document.createElement("div");
+  hdr.style.cssText = "display:flex;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap";
+  hdr.innerHTML = '<button class="btn" onclick="_detailAlertId=null;window.go(\'alerts\')">\u2190 Back</button>'
+    + '<span style="font-family:monospace;font-size:13px;font-weight:500">' + a.id + '</span>'
+    + ' ' + pb(a.priority||"low") + ' ' + sb(a.status||"open");
+  container.appendChild(hdr);
+
+  // Row 1: Alert summary + SHAP
+  var row1 = document.createElement("div");
+  row1.className = "g2"; row1.style.marginBottom = "14px";
+
+  // LEFT: alert summary
+  var sumCard = document.createElement("div"); sumCard.className = "card";
+  var modelRows = Object.entries(a.ml_models || {}).map(function(e) {
+    var labels = {iso:"Isolation Forest", xgb:"XGBoost", gnn:"Graph NN proxy", lstm:"RF temporal proxy"};
+    return '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">'
+      + '<span style="font-size:12px;color:var(--tx2);min-width:130px">' + (labels[e[0]]||e[0]) + '</span>'
+      + '<div style="flex:1;height:6px;background:var(--bg2);border-radius:3px"><div style="width:' + e[1] + '%;height:100%;background:#E24B4A;border-radius:3px"></div></div>'
+      + '<span style="font-size:12px;font-weight:700;color:#E24B4A;min-width:28px;text-align:right">' + e[1] + '</span>'
+      + '</div>';
+  }).join('');
+
+  sumCard.innerHTML = '<div class="ch"><span class="ct">Alert summary</span></div><div class="cb">'
+    + '<div style="display:flex;align-items:center;gap:14px;margin-bottom:14px">'
+    + '<div style="font-size:42px;font-weight:800;color:#E24B4A;line-height:1">' + (a.score||0) + '</div>'
+    + '<div><div style="font-size:15px;font-weight:700">' + (a.entity||"—") + '</div>'
+    + '<div style="font-size:12px;color:var(--tx2);margin-top:2px">' + (a.typology||"—") + ' \xb7 ' + (a.channel||"—") + '</div></div></div>'
+    + '<div class="rb" style="margin-bottom:16px"><div class="rf" style="width:' + (a.score||0) + '%;background:#E24B4A"></div></div>'
+    + '<div style="font-size:11px;color:var(--tx2);font-weight:500;margin-bottom:8px">MODEL VOTES</div>'
+    + modelRows
+    + '</div>';
+  row1.appendChild(sumCard);
+
+  // RIGHT: SHAP
+  var shapCard = document.createElement("div"); shapCard.className = "card";
+  var shapRows = (a.shap||[]).map(function(s) {
+    var pct = Math.abs(s.shap) * 400;
+    var col = s.shap >= 0 ? "#1E50B4" : "#E67E22";
+    var sign = s.shap >= 0 ? "+" : "-";
+    return '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">'
+      + '<span style="font-size:12px;color:var(--tx2);min-width:160px;text-align:right">' + s.label + '</span>'
+      + '<div style="flex:1;height:8px;background:var(--bg2);border-radius:4px"><div style="width:' + Math.min(pct,100) + '%;height:100%;background:' + col + ';border-radius:4px"></div></div>'
+      + '<span style="font-size:12px;font-weight:700;color:' + col + ';min-width:50px;text-align:right">' + sign + Math.abs(s.shap).toFixed(3) + '</span>'
+      + '</div>';
+  }).join('');
+
+  shapCard.innerHTML = '<div class="ch"><span class="ct">SHAP feature attribution</span><span style="font-size:11px;color:var(--tx2)">XGBoost explainability</span></div><div class="cb">'
+    + '<div style="font-size:11px;color:var(--tx2);margin-bottom:12px">Blue = raises risk \xb7 Orange = lowers risk</div>'
+    + shapRows
+    + '<div style="margin-top:10px;font-size:10px;color:var(--tx2)">Generated by SHAP \xb7 XGBoost base model \xb7 Live from ML engine</div></div>';
+  row1.appendChild(shapCard);
+  container.appendChild(row1);
+
+  // Row 2: Full transaction details (flagged)
+  var txCard = document.createElement("div"); txCard.className = "card";
+  txCard.style.marginBottom = "14px";
+
+  function renderTxnTable(txns, isFlagged) {
+    if (!txns.length) return '<div style="padding:16px;font-size:12px;color:var(--tx2)">No ' + (isFlagged?'flagged':'context') + ' transactions available.</div>';
+    return '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;min-width:900px">'
+      + '<thead><tr style="border-bottom:1px solid var(--bdr)">'
+      + '<th style="padding:8px 10px;text-align:left;font-size:10px;color:var(--tx2);font-weight:500;white-space:nowrap">TXN ID</th>'
+      + '<th style="padding:8px 10px;text-align:left;font-size:10px;color:var(--tx2);font-weight:500;white-space:nowrap">TIMESTAMP</th>'
+      + '<th style="padding:8px 10px;text-align:right;font-size:10px;color:var(--tx2);font-weight:500;white-space:nowrap">AMOUNT</th>'
+      + '<th style="padding:8px 10px;text-align:left;font-size:10px;color:var(--tx2);font-weight:500;white-space:nowrap">CHANNEL</th>'
+      + '<th style="padding:8px 10px;text-align:left;font-size:10px;color:var(--tx2);font-weight:500;white-space:nowrap">JURISDICTION</th>'
+      + '<th style="padding:8px 10px;text-align:left;font-size:10px;color:var(--tx2);font-weight:500;white-space:nowrap">TIER</th>'
+      + '<th style="padding:8px 10px;text-align:center;font-size:10px;color:var(--tx2);font-weight:500;white-space:nowrap">CP DEGREE</th>'
+      + '<th style="padding:8px 10px;text-align:center;font-size:10px;color:var(--tx2);font-weight:500;white-space:nowrap">ACCT AGE</th>'
+      + '<th style="padding:8px 10px;text-align:center;font-size:10px;color:var(--tx2);font-weight:500;white-space:nowrap">VEL 3D</th>'
+      + '<th style="padding:8px 10px;text-align:center;font-size:10px;color:var(--tx2);font-weight:500;white-space:nowrap">VEL 7D</th>'
+      + '<th style="padding:8px 10px;text-align:center;font-size:10px;color:var(--tx2);font-weight:500;white-space:nowrap">FLAGS</th>'
+      + '<th style="padding:8px 10px;text-align:center;font-size:10px;color:var(--tx2);font-weight:500;white-space:nowrap">PRIOR SARS</th>'
+      + '<th style="padding:8px 10px;text-align:center;font-size:10px;color:var(--tx2);font-weight:500;white-space:nowrap">ML SCORE</th>'
+      + '</tr></thead><tbody>'
+      + txns.map(function(t) {
+          var amtColor = t.amount < 0 ? '#E24B4A' : '#1EA064';
+          var amtFmt = (t.amount < 0 ? '- ' : '+ ') + '$' + Math.abs(t.amount||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+          var flags = [];
+          if (t.cross_border)    flags.push('<span style="background:rgba(30,80,180,0.15);color:#5b8dee;border-radius:4px;padding:1px 5px;font-size:10px;margin:1px">XBdr</span>');
+          if (t.multi_currency)  flags.push('<span style="background:rgba(186,117,23,0.15);color:#E67E22;border-radius:4px;padding:1px 5px;font-size:10px;margin:1px">MltCcy</span>');
+          if (t.round_dollar)    flags.push('<span style="background:rgba(120,50,180,0.15);color:#9b59b6;border-radius:4px;padding:1px 5px;font-size:10px;margin:1px">Rnd$</span>');
+          if (t.new_counterparty)flags.push('<span style="background:rgba(30,164,100,0.15);color:#1EA064;border-radius:4px;padding:1px 5px;font-size:10px;margin:1px">NewCP</span>');
+          var scoreColor = (t.ml_score||0)>=90?'#E24B4A':(t.ml_score||0)>=70?'#E67E22':'var(--tx2)';
+          var rowBg = isFlagged ? 'background:rgba(226,75,74,0.04)' : '';
+          return '<tr style="border-bottom:1px solid var(--bdr);' + rowBg + '">'
+            + '<td style="padding:9px 10px;font-family:monospace;font-size:11px;color:var(--tx2)">' + (t.transaction_id||'—') + '</td>'
+            + '<td style="padding:9px 10px;font-size:11px;white-space:nowrap">' + (t.timestamp||'—') + '</td>'
+            + '<td style="padding:9px 10px;font-weight:700;color:' + amtColor + ';text-align:right;font-size:13px">' + amtFmt + '</td>'
+            + '<td style="padding:9px 10px;font-size:12px">' + (t.channel||'—') + '</td>'
+            + '<td style="padding:9px 10px"><span style="background:' + (t.jurisdiction==='High'?'rgba(226,75,74,0.12)':t.jurisdiction==='Elevated'?'rgba(231,126,34,0.12)':'var(--bg2)') + ';color:' + (t.jurisdiction==='High'?'#E24B4A':t.jurisdiction==='Elevated'?'#E67E22':'var(--tx2)') + ';border-radius:4px;padding:2px 7px;font-size:11px">' + (t.jurisdiction||'—') + '</span></td>'
+            + '<td style="padding:9px 10px"><span style="background:' + (t.tier==='PEP'||t.tier==='High'?'rgba(226,75,74,0.12)':'var(--bg2)') + ';color:' + (t.tier==='PEP'||t.tier==='High'?'#E24B4A':'var(--tx2)') + ';border-radius:4px;padding:2px 7px;font-size:11px">' + (t.tier||'—') + '</span></td>'
+            + '<td style="padding:9px 10px;text-align:center;font-size:12px;font-weight:' + ((t.counterparty_degree||0)>10?'700':'400') + ';color:' + ((t.counterparty_degree||0)>10?'#E67E22':'var(--tx1)') + '">' + (t.counterparty_degree||0) + '</td>'
+            + '<td style="padding:9px 10px;text-align:center;font-size:11px;color:' + ((t.account_age_days||999)<90?'#E24B4A':'var(--tx2)') + '">' + (t.account_age_days||0) + ' days</td>'
+            + '<td style="padding:9px 10px;text-align:center;font-size:12px;color:' + ((t.velocity_3d||0)>200?'#E24B4A':(t.velocity_3d||0)>100?'#E67E22':'var(--tx2)') + '">' + Math.round(t.velocity_3d||0) + '%</td>'
+            + '<td style="padding:9px 10px;text-align:center;font-size:12px;color:' + ((t.velocity_7d||0)>200?'#E24B4A':(t.velocity_7d||0)>100?'#E67E22':'var(--tx2)') + '">' + Math.round(t.velocity_7d||0) + '%</td>'
+            + '<td style="padding:9px 10px;text-align:center">' + (flags.join('')||'<span style="color:var(--tx2);font-size:10px">—</span>') + '</td>'
+            + '<td style="padding:9px 10px;text-align:center;font-weight:700;color:' + ((t.prior_sars||0)>0?'#E24B4A':'var(--tx2)') + '">' + (t.prior_sars||0) + '</td>'
+            + '<td style="padding:9px 10px;text-align:center;font-weight:700;font-size:13px;color:' + scoreColor + '">' + ((t.ml_score||0)>0?(t.ml_score):'—') + '</td>'
+            + '</tr>';
+        }).join('')
+      + '</tbody></table></div>';
+  }
+
+  txCard.innerHTML = '<div class="ch" style="align-items:center">'
+    + '<span class="ct">Flagged transactions</span>'
+    + '<span style="font-size:11px;color:var(--tx2);margin-left:8px">\xb7 Transactions that triggered this alert</span>'
+    + '<span style="margin-left:auto;background:rgba(226,75,74,0.12);color:#E24B4A;border-radius:20px;padding:2px 10px;font-size:11px;font-weight:600">' + flaggedTxns.length + ' flagged \xb7 ' + totalTxns + ' total for entity</span>'
+    + '</div>'
+    + '<div class="cb" style="padding:0">' + renderTxnTable(flaggedTxns, true) + '</div>';
+  container.appendChild(txCard);
+
+  // Row 3: Context transactions (non-flagged, for pattern analysis)
+  if (contextTxns.length > 0) {
+    var ctxCard = document.createElement("div"); ctxCard.className = "card"; ctxCard.style.marginBottom = "14px";
+    ctxCard.innerHTML = '<div class="ch" style="align-items:center">'
+      + '<span class="ct">Context transactions</span>'
+      + '<span style="font-size:11px;color:var(--tx2);margin-left:8px">\xb7 Recent non-flagged activity for pattern analysis</span>'
+      + '<span style="margin-left:auto;font-size:11px;color:var(--tx2)">' + contextTxns.length + ' shown</span>'
+      + '</div>'
+      + '<div class="cb" style="padding:0">' + renderTxnTable(contextTxns, false) + '</div>';
+    container.appendChild(ctxCard);
+  }
+
+  // Row 4: Alert metadata
+  var metaCard = document.createElement("div"); metaCard.className = "card";
+  metaCard.innerHTML = '<div class="ch"><span class="ct">Alert metadata</span></div><div class="cb">'
+    + '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px">'
+    + meta('Alert ID', a.id) + meta('Entity', a.entity) + meta('Channel', a.channel)
+    + meta('Typology', a.typology) + meta('Score', a.score + '/100') + meta('Priority', (a.priority||'').toUpperCase())
+    + meta('Status', a.status) + meta('Officer', a.officer||'Unassigned')
+    + '</div></div>';
+  container.appendChild(metaCard);
+
+  var ct = document.getElementById("content");
+  ct.innerHTML = "";
+  ct.appendChild(container);
+}
+
+function meta(label, val) {
+  return '<div style="background:var(--bg2);border-radius:6px;padding:10px 12px">'
+    + '<div style="font-size:10px;color:var(--tx2);font-weight:500;margin-bottom:3px">' + label.toUpperCase() + '</div>'
+    + '<div style="font-size:13px;font-weight:500">' + (val||'—') + '</div></div>';
 }
 
 async function alertAction(id, action, extraBody={}) {
@@ -911,96 +1280,171 @@ async function cases() {
   const queue = queueData || {};
   const escalated = queue.escalated_alerts || [];
   const assigned  = queue.assigned_alerts  || [];
-  $('case-count').textContent = rows.filter(c=>c.status!=='filed').length;
 
-  const criticalOpen = rows.filter(c=>c.priority==='critical'&&c.status!=='filed').length;
+  // Status counts
+  const cOpen      = rows.filter(c=>c.status==='open').length;
+  const cReview    = rows.filter(c=>c.status==='review').length;
+  const cEscalated = rows.filter(c=>c.status==='escalated').length;
+  const cFiled     = rows.filter(c=>c.status==='filed').length;
+  const cCleared   = rows.filter(c=>c.status==='cleared').length;
+  const cCritical  = rows.filter(c=>c.priority==='critical'&&c.status==='open').length;
+  $('case-count').textContent = cOpen + cReview;
 
-  $('content').innerHTML = `
-<div class="mrow">
-  <div class="mc"><div class="ml">Open cases</div><div class="mv">${rows.filter(c=>c.status==='open'||c.status==='review').length}</div><div class="md ${criticalOpen?'r':''}">${criticalOpen} critical open</div></div>
-  <div class="mc"><div class="ml">SARs filed (30d)</div><div class="mv">${rows.filter(c=>c.status==='filed').length}</div><div class="md">FinCEN BSA e-filing</div></div>
-  <div class="mc"><div class="ml">Escalated to me</div><div class="mv ${escalated.length?'r':''}">${escalated.length||0}</div><div class="md ${escalated.length?'r':''}">Awaiting supervisor review</div></div>
-  <div class="mc"><div class="ml">Assigned to me</div><div class="mv">${assigned.length||0}</div><div class="md">My active workload</div></div>
-</div>
+  // Active filter state
+  window._caseFilter = window._caseFilter || 'all';
 
-${_userPerms.has('file_sar') && escalated.length > 0 ? `
-<div class="card" style="margin-bottom:14px;border-top:3px solid var(--orange)">
-  <div class="ch">
-    <span class="ct" style="color:var(--orange)">⚠ Escalation Queue — Requires Your Review</span>
-    <span style="font-size:11px;color:var(--tx2)">${escalated.length} alert${escalated.length!==1?'s':''} escalated from analysts</span>
-  </div>
-  <table><thead><tr><th>Alert ID</th><th>Entity</th><th>Score</th><th>Typology</th><th>Escalated by</th><th>Notes</th><th>Date</th><th></th></tr></thead><tbody>
-  ${escalated.map(a=>`<tr style="background:var(--lred)">
-    <td style="font-family:monospace;font-size:11px">${a.id}</td>
-    <td style="font-weight:500">${a.entity}</td>
-    <td style="font-weight:700;color:var(--red)">${a.score}</td>
-    <td style="font-size:11px">${a.typology||'—'}</td>
-    <td style="font-size:12px">${a.escalated_by||'—'}</td>
-    <td style="font-size:11px;color:var(--tx2);max-width:200px;overflow:hidden;text-overflow:ellipsis">${a.escalation_notes||''}</td>
-    <td style="font-size:11px;color:var(--tx2)">${(a.escalated_at||'').split(' ')[0]}</td>
-    <td style="display:flex;gap:4px">
-      <button class="btn" onclick="_detailAlertId='${a.id}';go('alerts')" style="font-size:10px;padding:2px 7px">View</button>
-      <button class="btn primary" style="font-size:10px;padding:2px 7px" onclick="showAssignDialog('${a.id}')">Assign</button>
-      <button class="btn success" style="font-size:10px;padding:2px 7px" onclick="takeCaseAlert('${a.id}')">Take it</button>
-    </td>
-  </tr>`).join('')}
-  </tbody></table>
-</div>` : ''}
+  function renderTable(filter) {
+    window._caseFilter = filter;
+    const filtered = filter === 'all' ? rows :
+                     filter === 'cleared' ? rows.filter(c=>c.status==='cleared') :
+                     filter === 'filed'   ? rows.filter(c=>c.status==='filed') :
+                     filter === 'escalated' ? rows.filter(c=>c.status==='escalated') :
+                     filter === 'review'  ? rows.filter(c=>c.status==='review') :
+                     rows.filter(c=>c.status==='open');
 
-${_userPerms.has('file_sar') && assigned.length > 0 ? `
-<div class="card" style="margin-bottom:14px;border-top:3px solid var(--blue)">
-  <div class="ch">
-    <span class="ct">Assigned to me</span>
-    <span style="font-size:11px;color:var(--tx2)">${assigned.length} active</span>
-  </div>
-  <table><thead><tr><th>Alert ID</th><th>Entity</th><th>Score</th><th>Typology</th><th>Status</th><th></th></tr></thead><tbody>
-  ${assigned.map(a=>`<tr>
-    <td style="font-family:monospace;font-size:11px">${a.id}</td>
-    <td style="font-weight:500">${a.entity}</td>
-    <td style="font-weight:700;color:${sc(a.score)}">${a.score}</td>
-    <td style="font-size:11px">${a.typology||'—'}</td>
-    <td>${sb(a.status)}</td>
-    <td><button class="btn" onclick="_detailAlertId='${a.id}';go('alerts')" style="font-size:10px;padding:2px 7px">Review →</button></td>
-  </tr>`).join('')}
-  </tbody></table>
-</div>` : ''}
-
-<div class="card"><div class="ch"><span class="ct">All cases</span>
-  ${_userPerms.has('file_sar') ? `<div style="display:flex;gap:6px">
-    <button class="btn" onclick="filterCases('all')" id="cf-all" style="font-size:11px;padding:3px 9px;background:var(--blue);color:#fff">All</button>
-    <button class="btn" onclick="filterCases('open')" id="cf-open" style="font-size:11px;padding:3px 9px">Open</button>
-    <button class="btn" onclick="filterCases('filed')" id="cf-filed" style="font-size:11px;padding:3px 9px">Filed</button>
-    <button class="btn" onclick="filterCases('mine')" id="cf-mine" style="font-size:11px;padding:3px 9px">Mine</button>
-  </div>` : ''}
-</div>
-<table id="cases-table"><thead><tr><th>Case ID</th><th>Entity</th><th>Alerts</th><th>Typology</th><th>Priority</th><th>Status</th><th>Officer</th><th>Opened</th><th>SAR status</th><th></th></tr></thead><tbody id="cases-tbody">
-${rows.map(c=>`<tr data-status="${c.status}" data-officer="${c.officer||''}">
-  <td style="font-family:monospace;font-size:11px">${c.id}</td>
-  <td style="font-weight:500">${c.entity}</td>
-  <td style="font-weight:600">${c.alert_count}</td>
-  <td style="font-size:11px">${c.typology||'—'}</td>
-  <td>${pb(c.priority)}</td>
-  <td>${sb(c.status)}</td>
-  <td style="font-size:12px">${c.officer||'<span style="color:var(--tx2)">Unassigned</span>'}</td>
-  <td style="font-size:11px;color:var(--tx2)">${c.opened?.split(' ')[0]||''}</td>
-  <td style="font-size:12px;font-weight:600;color:${c.sar_status==='filed'?'var(--green)':c.sar_status==='pending'?'var(--orange)':'var(--tx2)'}">${c.sar_status==='filed'?'✓ Filed':c.sar_status==='pending'?'Pending':'—'}</td>
-  <td><button class="btn" onclick="openCase('${c.id}')" style="font-size:11px;padding:3px 9px">View →</button></td>
-</tr>`).join('')}
-</tbody></table></div>`;
-
-  window.filterCases = function(filter) {
-    const me = _currentUser?.name || '';
-    document.querySelectorAll('[id^=cf-]').forEach(b=>b.style.background='');
-    const btn = document.getElementById('cf-'+filter);
-    if(btn) btn.style.background='var(--blue)';
-    document.querySelectorAll('#cases-tbody tr').forEach(row=>{
-      const st = row.dataset.status, off = row.dataset.officer;
-      if(filter==='all')    row.style.display='';
-      else if(filter==='open')  row.style.display = (st==='open'||st==='review'||st==='escalated')?'':'none';
-      else if(filter==='filed') row.style.display = st==='filed'?'':'none';
-      else if(filter==='mine')  row.style.display = off===me?'':'none';
+    // Update tab active states
+    ['all','open','review','escalated','filed','cleared'].forEach(function(t) {
+      var el = document.getElementById('ctab-'+t);
+      if (el) {
+        el.style.background   = (filter===t) ? 'var(--accent)' : 'transparent';
+        el.style.color        = (filter===t) ? '#fff' : 'var(--tx2)';
+        el.style.borderColor  = (filter===t) ? 'var(--accent)' : 'var(--bdr)';
+      }
     });
-  };
+
+    var tbody = document.getElementById('cases-tbody');
+    if (!tbody) return;
+    if (!filtered.length) {
+      tbody.innerHTML = '<tr><td colspan="9" style="padding:32px;text-align:center;color:var(--tx2);font-size:13px">No cases in this category.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = filtered.map(function(c) {
+      var statusBadge;
+      if (c.status==='filed')     statusBadge = '<span style="background:rgba(30,164,100,0.15);color:#1EA064;border:1px solid rgba(30,164,100,0.3);border-radius:12px;padding:2px 8px;font-size:11px;font-weight:500">&#10003; Filed</span>';
+      else if (c.status==='escalated') statusBadge = '<span style="background:rgba(30,80,180,0.15);color:#5b8dee;border:1px solid rgba(30,80,180,0.3);border-radius:12px;padding:2px 8px;font-size:11px;font-weight:500">&#9650; Escalated</span>';
+      else if (c.status==='cleared')   statusBadge = '<span style="background:rgba(90,90,86,0.25);color:#9a9a96;border:1px solid rgba(90,90,86,0.35);border-radius:12px;padding:2px 8px;font-size:11px;font-weight:500">&#10005; Cleared</span>';
+      else if (c.status==='review')    statusBadge = '<span style="background:rgba(186,117,23,0.15);color:#E67E22;border:1px solid rgba(186,117,23,0.3);border-radius:12px;padding:2px 8px;font-size:11px;font-weight:500">&#9679; Review</span>';
+      else statusBadge = sb('open');
+
+      var sarBadge;
+      if (c.sar_status==='filed')      sarBadge = '<span style="color:#1EA064;font-size:12px;font-weight:500">&#10003; Filed</span>';
+      else if (c.sar_status==='escalated') sarBadge = '<span style="color:#5b8dee;font-size:12px">&#9650; Escalated</span>';
+      else sarBadge = '<span style="color:#E67E22;font-size:12px">Pending</span>';
+
+      return '<tr data-cid="' + c.id + '" style="cursor:pointer;border-bottom:1px solid var(--bdr)">'
+        + '<td style="padding:11px 10px;font-family:monospace;font-size:11px">' + c.id + '</td>'
+        + '<td style="padding:11px 10px;font-weight:600;font-size:13px">' + (c.entity||'—') + '</td>'
+        + '<td style="padding:11px 10px;text-align:center">' + (c.alert_count||0) + '</td>'
+        + '<td style="padding:11px 10px;font-size:12px">' + (c.typology||'—') + '</td>'
+        + '<td style="padding:11px 10px">' + pb(c.priority||'low') + '</td>'
+        + '<td style="padding:11px 10px">' + statusBadge + '</td>'
+        + '<td style="padding:11px 10px;font-size:12px">' + (c.officer||'—') + '</td>'
+        + '<td style="padding:11px 10px;font-size:11px;color:var(--tx2)">' + ((c.opened||'').split(' ')[0]||'—') + '</td>'
+        + '<td style="padding:11px 10px">' + sarBadge + '</td>'
+        + '</tr>';
+    }).join('');
+
+    // Wire row clicks
+    document.querySelectorAll('[data-cid]').forEach(function(row) {
+      row.onmouseover = function(){ this.style.background='var(--bg2)'; };
+      row.onmouseout  = function(){ this.style.background=''; };
+      row.onclick = function(){ openCase(row.getAttribute('data-cid')); };
+    });
+  }
+
+  var container = document.createElement('div');
+
+  // Metrics row — all 5 statuses
+  var mrow = document.createElement('div');
+  mrow.className = 'mrow';
+  mrow.style.marginBottom = '16px';
+  mrow.innerHTML =
+    '<div class="mc" style="cursor:pointer" id="mc-open">'
+      + '<div class="ml">Open cases</div>'
+      + '<div class="mv' + (cCritical?' r':'') + '">' + cOpen + '</div>'
+      + '<div class="md' + (cCritical?' r':'') + '">' + cCritical + ' critical open</div>'
+    + '</div>'
+    + '<div class="mc" style="cursor:pointer" id="mc-review">'
+      + '<div class="ml">In review</div>'
+      + '<div class="mv">' + cReview + '</div>'
+      + '<div class="md">Under investigation</div>'
+    + '</div>'
+    + '<div class="mc" style="cursor:pointer" id="mc-escalated">'
+      + '<div class="ml">Escalated</div>'
+      + '<div class="mv' + (cEscalated?' r':'') + '">' + cEscalated + '</div>'
+      + '<div class="md' + (cEscalated?' r':'') + '">Awaiting supervisor review</div>'
+    + '</div>'
+    + '<div class="mc" style="cursor:pointer" id="mc-filed">'
+      + '<div class="ml">SARs filed (30d)</div>'
+      + '<div class="mv" style="color:#1EA064">' + cFiled + '</div>'
+      + '<div class="md">FinCEN BSA e-filing</div>'
+    + '</div>'
+    + '<div class="mc" style="cursor:pointer" id="mc-cleared">'
+      + '<div class="ml">Cleared</div>'
+      + '<div class="mv" style="color:#9a9a96">' + cCleared + '</div>'
+      + '<div class="md">No SAR required</div>'
+    + '</div>';
+  container.appendChild(mrow);
+
+  // Cases card
+  var card = document.createElement('div');
+  card.className = 'card';
+
+  // Filter tabs
+  var tabsHtml = '<div style="display:flex;align-items:center;gap:6px;margin-bottom:14px;flex-wrap:wrap">'
+    + '<span style="font-size:13px;font-weight:600;margin-right:4px">Cases</span>';
+
+  var tabs = [
+    {id:'all',      label:'All (' + rows.length + ')'},
+    {id:'open',     label:'Open (' + cOpen + ')'},
+    {id:'review',   label:'Review (' + cReview + ')'},
+    {id:'escalated',label:'Escalated (' + cEscalated + ')'},
+    {id:'filed',    label:'Filed (' + cFiled + ')'},
+    {id:'cleared',  label:'Cleared (' + cCleared + ')'},
+  ];
+  tabs.forEach(function(t) {
+    tabsHtml += '<button id="ctab-' + t.id + '" onclick="window._renderCaseTable(\'' + t.id + '\')" '
+      + 'style="border:1px solid var(--bdr);border-radius:20px;padding:4px 12px;font-size:11px;cursor:pointer;background:transparent;color:var(--tx2);transition:all 0.15s">'
+      + t.label + '</button>';
+  });
+  tabsHtml += '</div>';
+
+  card.innerHTML = '<div class="ch"><span class="ct">All cases</span></div>'
+    + '<div class="cb" style="padding:12px">'
+    + tabsHtml
+    + '<div style="overflow-x:auto">'
+    + '<table style="width:100%;border-collapse:collapse;min-width:800px">'
+    + '<thead><tr style="border-bottom:1px solid var(--bdr)">'
+    + '<th style="padding:8px 10px;text-align:left;font-size:11px;color:var(--tx2);font-weight:500">CASE ID</th>'
+    + '<th style="padding:8px 10px;text-align:left;font-size:11px;color:var(--tx2);font-weight:500">ENTITY</th>'
+    + '<th style="padding:8px 10px;text-align:center;font-size:11px;color:var(--tx2);font-weight:500">ALERTS</th>'
+    + '<th style="padding:8px 10px;text-align:left;font-size:11px;color:var(--tx2);font-weight:500">TYPOLOGY</th>'
+    + '<th style="padding:8px 10px;text-align:left;font-size:11px;color:var(--tx2);font-weight:500">PRIORITY</th>'
+    + '<th style="padding:8px 10px;text-align:left;font-size:11px;color:var(--tx2);font-weight:500">STATUS</th>'
+    + '<th style="padding:8px 10px;text-align:left;font-size:11px;color:var(--tx2);font-weight:500">OFFICER</th>'
+    + '<th style="padding:8px 10px;text-align:left;font-size:11px;color:var(--tx2);font-weight:500">OPENED</th>'
+    + '<th style="padding:8px 10px;text-align:left;font-size:11px;color:var(--tx2);font-weight:500">SAR STATUS</th>'
+    + '</tr></thead>'
+    + '<tbody id="cases-tbody"></tbody>'
+    + '</table></div></div>';
+
+  container.appendChild(card);
+
+  var ct = document.getElementById('content');
+  ct.innerHTML = '';
+  ct.appendChild(container);
+
+  // Expose renderTable globally for tab clicks
+  window._renderCaseTable = renderTable;
+
+  // Metric card clicks filter the table
+  ['open','review','escalated','filed','cleared'].forEach(function(status) {
+    var mc = document.getElementById('mc-' + status);
+    if (mc) mc.onclick = function(){ renderTable(status); };
+  });
+
+  // Initial render — default to 'all'
+  renderTable(window._caseFilter || 'all');
 }
 
 async function takeCaseAlert(alertId) {
@@ -1015,212 +1459,539 @@ async function openCase(id) {
   const cid = c.id || id;
   const score = c.score || (alerts.length ? Math.max.apply(null, alerts.map(function(a){return a.score||0;})) : 0);
   const scoreColor = score>=90?"#E24B4A":score>=70?"#E67E22":"#1EA064";
+  const isEscalated  = c.status === "escalated";
+  const isFiled      = c.status === "filed";
+  const isCleared    = c.status === "cleared";
+  const isSupervisor = (window._userPerms && window._userPerms.has("file_sar")) || (window._currentUser && (window._currentUser.role === "supervisor" || window._currentUser.role === "admin"));
+  // Supervisors can edit escalated cases; analysts locked out on escalated/filed/cleared
+  const isLocked   = isSupervisor ? (isFiled || isCleared) : (isEscalated || isFiled || isCleared);
+  const isViewOnly = isFiled || isCleared;
 
-  // ── Build real investigation narrative ──────────────────────────────────
-  function buildNarrative() {
-    var entity   = c.entity || "Unknown Entity";
-    var typo     = c.typology || "suspicious activity";
+  function buildAutoNarrative() {
+    var entity   = c.entity   || "Unknown Entity";
+    var typo     = c.typology || "Suspicious Activity";
+    var officer  = c.officer  || "Unassigned Officer";
     var count    = alerts.length;
     var maxScore = score;
+    var priority = (c.priority||"low").toUpperCase();
+    var opened   = c.opened   || c.created_at || "Unknown date";
     var channels = [];
     alerts.forEach(function(a){ if(a.channel && channels.indexOf(a.channel)<0) channels.push(a.channel); });
     var channelStr = channels.length ? channels.join(", ") : "multiple channels";
-    var officer  = c.officer || "the assigned officer";
-    var opened   = c.created_at ? new Date(c.created_at).toLocaleDateString("en-GB",{day:"numeric",month:"long",year:"numeric"}) : "recently";
+    var alertIds = alerts.map(function(a){ return a.id; }).join(", ") || "N/A";
+    var totalAmt = alerts.reduce(function(s,a){ return s + (parseFloat(a.amount)||0); }, 0);
+    var amtStr = totalAmt > 0 ? "$" + totalAmt.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2}) : "Amount not disclosed";
+    var today = new Date().toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"});
 
-    var ctx = {};
-    ctx["Structuring"] = "The transaction pattern is consistent with deliberate threshold evasion - multiple transactions structured just below CTR reporting thresholds ($10,000) across different branches and time windows to avoid mandatory filing obligations.";
-    ctx["Structuring / threshold evasion"] = "Multiple transactions have been identified that appear deliberately structured below the Currency Transaction Report (CTR) threshold of $10,000. This pattern - commonly known as structuring - is a federal offense under 31 U.S.C. section 5324 regardless of whether the underlying funds are legitimate.";
-    ctx["Layering"] = "The entity has engaged in a series of rapid, complex fund movements across multiple accounts and jurisdictions consistent with the layering phase of money laundering. Funds are moved in quick succession with no apparent commercial rationale, making the audit trail difficult to follow.";
-    ctx["Shell Company"] = "Activity is consistent with use of a shell company structure to obscure beneficial ownership. The entity exhibits characteristics typical of nominee control: minimal operational footprint, new account activity, high counterparty degree, and transaction volumes disproportionate to stated business purpose.";
-    ctx["Smurfing"] = "Multiple sub-threshold cash deposits have been identified across a short time window, consistent with a coordinated smurfing operation. The pattern suggests organised placement of illicit funds using multiple depositors or branch locations to avoid detection.";
-    ctx["Sanctions"] = "Transactions indicate potential sanctions exposure. Activity involves counterparties, jurisdictions, or payment channels with elevated OFAC/SDN risk indicators. The velocity and volume of cross-border transfers are inconsistent with the stated risk profile.";
-    ctx["Layering / Shell"] = "The entity demonstrates a complex layered transaction pattern involving apparent shell company intermediaries. Rapid succession of transfers through multiple entities obscures the origin of funds.";
-    ctx["Crypto/Virtual Assets"] = "The entity has engaged in rapid conversion between fiat and virtual assets with no apparent commercial purpose. This pattern is consistent with crypto-based layering, where digital asset conversion is used to break the audit trail before funds are reintroduced to the financial system.";
-    ctx["Trade-Based AML"] = "Discrepancies in trade finance documentation and payment flows indicate possible trade-based money laundering (TBML). Over/under-invoicing patterns have been detected relative to market benchmarks.";
-    ctx["Fraud/Cybercrime"] = "Transaction patterns are consistent with proceeds of fraud or cybercrime. Rapid outbound wire activity following large inbound credits, combined with new counterparty relationships and high-risk jurisdictions, indicates possible mule account behaviour.";
-    var contextPara = ctx[typo] || "The detected activity pattern is anomalous relative to the peer group and historical baseline, warranting further investigation under the institution BSA/AML programme.";
+    // Part I: Activity descriptions by typology
+    var actDesc = {
+      "Structuring":
+        "The subject entity conducted multiple cash transactions structured below the $10,000 Currency Transaction Report (CTR) filing threshold. The transactions appear deliberately fragmented to evade mandatory reporting requirements under 31 U.S.C. sec. 5313 and 31 C.F.R. sec. 1010.311. The pattern is consistent with the federal crime of structuring as defined under 31 U.S.C. sec. 5324(a), which prohibits structuring transactions for the purpose of evading reporting requirements, regardless of whether the underlying funds are derived from illegal activity.",
+      "Structuring / threshold evasion":
+        "The subject entity conducted multiple financial transactions deliberately structured below the $10,000 CTR threshold across multiple branches and time windows. This pattern constitutes structuring under 31 U.S.C. sec. 5324(a) and is a standalone federal offense. The transactions show clear intentional fragmentation with no legitimate business purpose to explain the sub-threshold pattern. The AI/ML monitoring system identified threshold evasion across " + count + " separate transaction events.",
+      "Layering":
+        "The subject entity engaged in a rapid, complex series of fund movements through multiple accounts, financial institutions, and jurisdictions with no apparent legitimate commercial purpose. The pattern is consistent with the layering phase of money laundering as described in FATF guidance, in which illicit proceeds are moved through multiple steps to obscure the original source. Funds were transferred in quick succession through " + channelStr + ", making the audit trail deliberately difficult to follow.",
+      "Shell Company":
+        "The subject entity exhibits characteristics consistent with the use of a shell company or nominee structure to obscure beneficial ownership and facilitate financial crime. Indicators include: account activity disproportionate to disclosed business purpose, high counterparty network density with no identifiable commercial relationships, and transaction patterns inconsistent with stated business operations. This activity is consistent with money laundering through corporate vehicles as described in 31 U.S.C. sec. 5318(g) and FinCEN guidance FIN-2006-G014.",
+      "Smurfing":
+        "Multiple sub-threshold cash deposits were identified across a compressed time window, consistent with a coordinated smurfing operation. The deposits appear to involve structured placement of funds through multiple transactions to circumvent CTR reporting thresholds under 31 C.F.R. sec. 1010.311. This activity is consistent with the placement phase of money laundering, in which illicit cash is introduced into the financial system through multiple smaller transactions.",
+      "Sanctions":
+        "Transaction activity associated with the subject entity indicates potential exposure to OFAC-designated entities, sanctioned jurisdictions, or SDN-listed counterparties. Transactions involve payment flows to or from jurisdictions identified as high-risk under OFAC sanctions programmes. This institution is required to block or reject such transactions and file a report under 31 C.F.R. Part 501. The AI/ML ensemble identified potential SDN exposure across " + count + " transaction events.",
+      "Layering / Shell":
+        "The subject entity demonstrates a complex layered transaction pattern facilitated through apparent shell company intermediaries. Multiple fund transfers through nominee entities with no identifiable commercial activity were detected. The layering structure is designed to create distance between the source of funds and their ultimate destination, consistent with professional money laundering techniques described in FATF Typologies Report on Shell Companies (2006).",
+      "Crypto/Virtual Assets":
+        "The subject entity engaged in rapid conversion between fiat currency and virtual assets with no discernible commercial purpose, consistent with crypto-based layering. The conversion pattern is designed to break the financial audit trail and circumvent standard AML controls. This activity falls within FinCEN guidance on virtual currency (FIN-2013-G001 and FIN-2019-G001), which extends BSA obligations to money services businesses transmitting value through virtual assets.",
+      "Trade-Based AML":
+        "Discrepancies identified in trade finance payment flows indicate possible trade-based money laundering (TBML). Indicators include over/under-invoicing patterns relative to industry benchmarks, misrepresentation of goods or services, and payment flows inconsistent with the stated trade relationship. This activity is consistent with FATF guidance on TBML (June 2006) and may involve manipulation of international trade transactions to transfer value across borders.",
+      "Fraud/Cybercrime":
+        "Transaction patterns are consistent with proceeds of fraud, cybercrime, or business email compromise (BEC). Indicators include rapid outbound wire transfers following large inbound credits from previously unknown counterparties, account takeover indicators, and payment to high-risk jurisdictions. The pattern is consistent with money mule activity as described in FinCEN Advisory FIN-2019-A005 on BEC fraud."
+    };
+    var activityDesc = actDesc[typo] || ("The subject entity exhibited anomalous transaction behaviour inconsistent with its established baseline and peer-group norms. The AI/ML ensemble monitoring system assigned a risk score of " + maxScore + "/100, indicating a high probability of suspicious activity warranting further investigation and potential SAR filing under 31 U.S.C. sec. 5318(g).");
 
-    var riskFactors = [];
-    if (maxScore >= 90) riskFactors.push("composite ML risk score exceeding 90/100");
-    else if (maxScore >= 75) riskFactors.push("elevated ML risk score of " + maxScore + "/100");
-    if (count >= 3) riskFactors.push(count + " linked critical alerts");
-    if (channels.length >= 2) riskFactors.push("activity spanning " + channels.length + " transaction channels");
-    var riskStr = riskFactors.length ? " Key risk indicators include: " + riskFactors.join("; ") + "." : "";
-
-    return [
-      "CASE " + cid + " - INVESTIGATION NARRATIVE",
+    var lines = [
+      "FinCEN SAR NARRATIVE - CASE " + cid,
+      "Filing Institution: First National Compliance Bank (FNCB) | BSA/AML Compliance Department",
+      "Prepared by: " + officer + " | Date prepared: " + today,
+      "Classification: SUSPICIOUS ACTIVITY REPORT - CONFIDENTIAL",
+      "════════════════════════════════════════════════════════════════",
       "",
-      "Subject entity " + entity + " was escalated to case management on " + opened + " following automated detection of " + typo + " activity by the AI/ML ensemble monitoring system." + riskStr,
+      "PART I - SUBJECT INFORMATION",
+      "Subject name: " + entity,
+      "Risk classification: " + priority + " | ML Risk score: " + maxScore + "/100",
+      "Case number: " + cid + " | Linked alerts: " + alertIds,
+      "Transaction channels: " + channelStr,
+      "Aggregate transaction amount: " + amtStr,
+      "Case opened: " + opened,
       "",
-      contextPara,
+      "PART II - SUSPICIOUS ACTIVITY DESCRIPTION",
+      "Typology: " + typo,
       "",
-      "A total of " + count + " alert" + (count!==1?"s":"") + " have been linked to this case, with the highest individual risk score of " + maxScore + "/100. Activity observed across " + channelStr + ". The ML ensemble (Isolation Forest, XGBoost, GNN, LSTM) flagged this entity based on anomalous velocity, counterparty network density, and behavioural deviation from peer-group baseline - achieving 89.8% fewer false positives than the legacy rule-based system.",
+      activityDesc,
       "",
-      "This case has been assigned to " + officer + " for review. Recommended actions: (1) obtain all transaction records and account opening documentation; (2) conduct enhanced due diligence on identified counterparties; (3) assess whether a Suspicious Activity Report (SAR) should be filed with FinCEN under 31 U.S.C. section 5318(g); (4) determine whether account restriction or closure is warranted.",
+      "PART III - TRANSACTION DETAILS",
+      "This SAR covers " + count + " alert event" + (count!==1?"s":"") + " linked to case " + cid + " involving subject entity " + entity + ". Transactions were conducted via " + channelStr + " with a combined flagged value of " + amtStr + ". The AI/ML ensemble monitoring system (Isolation Forest, XGBoost, Graph Neural Network, LSTM) assigned an aggregate risk score of " + maxScore + "/100, representing the " + (maxScore>=90?"top 1%":"top 5%") + " of suspicious activity indicators in the institution peer group. The ensemble achieved an 89.8% reduction in false-positive rate compared to the legacy rule-based detection system.",
       "",
-      "All findings must be recorded within 30 calendar days of case opening, in compliance with the institution BSA/AML Programme."
-    ].join("\n");
+      "PART IV - INSTITUTION CONTACT",
+      "Filing institution: First National Compliance Bank (FNCB)",
+      "BSA/AML Officer: Ransford Adjapong, Head of AML Compliance",
+      "Contact: r.adjapong@fncb.com | AML Compliance Department",
+      "This SAR is filed in accordance with 31 U.S.C. sec. 5318(g) and 31 C.F.R. sec. 1020.320.",
+      "Law enforcement should contact the BSA Officer for supporting documentation.",
+      "",
+      "PART V - SUPPORTING INFORMATION",
+      "The following actions have been taken or are recommended:",
+      "  (1) All transaction records and account documentation have been preserved.",
+      "  (2) Enhanced due diligence has been initiated on subject entity and identified counterparties.",
+      "  (3) Internal escalation completed on " + today + " by " + officer + ".",
+      "  (4) Account restriction or closure should be considered pending law enforcement guidance.",
+      "  (5) Retain all supporting documentation for a minimum of 5 years per 31 C.F.R. sec. 1010.430.",
+      "",
+      "NOTE: This SAR is filed pursuant to the Bank Secrecy Act. It is confidential and may not be disclosed",
+      "to the subject of the report per 31 U.S.C. sec. 5318(g)(2)."
+    ];
+    return lines.join("\n");
   }
 
-  // ── Build entity graph SVG ────────────────────────────────────────────────
+  var narrativeText = (c.narrative && c.narrative.trim().length > 0) ? c.narrative : buildAutoNarrative();
+
   function buildGraph() {
-    var channels = [];
-    alerts.forEach(function(a){ if(a.channel && channels.indexOf(a.channel)<0) channels.push(a.channel); });
-    var nodeColor = score>=90?"#E24B4A":score>=70?"#E67E22":"#1EA064";
-    var chanColors = {"Wire Transfer":"#1E50B4","Cash Deposit":"#7832B4","Fintech API":"#0F6E56","Mobile Banking":"#B8490A","FX/Treasury":"#BA7517","Trade Finance":"#5a5a56"};
-    var entityLabel = (c.entity||"Entity").length>16 ? (c.entity||"Entity").substring(0,14)+"..." : (c.entity||"Entity");
-
-    var nodes = [{id:"E0",label:entityLabel,x:200,y:145,r:28,color:nodeColor,type:"entity",score:score}];
-    var edges = [];
-
-    channels.slice(0,4).forEach(function(ch, i) {
-      var angle = -Math.PI*0.6 + i*(Math.PI*1.2/Math.max(channels.length-1,1));
-      var nx = 200+120*Math.cos(angle), ny = 145+95*Math.sin(angle);
-      nodes.push({id:"C"+i,label:ch.replace(" Transfer","").replace(" Banking",""),x:nx,y:ny,r:17,color:chanColors[ch]||"#444",type:"channel"});
-      edges.push({from:"E0",to:"C"+i});
-    });
-
-    alerts.slice(0,5).forEach(function(a, i) {
-      var angle = Math.PI*0.2+i*(Math.PI*0.6/Math.max(alerts.length-1,1));
-      var nx = 200+130*Math.cos(angle), ny = 145+105*Math.sin(angle);
-      var ac = (a.score||0)>=90?"#E24B4A":(a.score||0)>=70?"#E67E22":"#1EA064";
-      nodes.push({id:"A"+i,label:a.id||("ALT-"+i),x:nx,y:ny,r:14,color:ac,type:"alert",score:a.score||0});
-      edges.push({from:"E0",to:"A"+i});
-    });
-
-    var s = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 290" style="width:100%;height:200px;background:var(--bg1);border-radius:8px">';
-    s += '<defs><pattern id="g" width="20" height="20" patternUnits="userSpaceOnUse"><path d="M20 0L0 0 0 20" fill="none" stroke="rgba(255,255,255,0.03)" stroke-width="1"/></pattern></defs>';
-    s += '<rect width="400" height="290" fill="url(#g)"/>';
-    edges.forEach(function(e) {
-      var fn = nodes.filter(function(n){return n.id===e.from;})[0];
-      var tn = nodes.filter(function(n){return n.id===e.to;})[0];
-      if(fn&&tn) s += '<line x1="'+fn.x+'" y1="'+fn.y+'" x2="'+tn.x+'" y2="'+tn.y+'" stroke="rgba(255,255,255,0.15)" stroke-width="1.5" stroke-dasharray="4,3"/>';
-    });
-    nodes.forEach(function(n) {
-      s += '<circle cx="'+n.x+'" cy="'+n.y+'" r="'+(n.r+5)+'" fill="'+n.color+'" opacity="0.12"/>';
-      s += '<circle cx="'+n.x+'" cy="'+n.y+'" r="'+n.r+'" fill="'+n.color+'" stroke="rgba(255,255,255,0.2)" stroke-width="1.5"/>';
-      if(n.type==="entity") s += '<text x="'+n.x+'" y="'+(n.y+4)+'" text-anchor="middle" font-size="11" font-weight="700" fill="#fff" font-family="Calibri,sans-serif">'+n.score+'</text>';
-      else if(n.type==="alert"&&n.score) s += '<text x="'+n.x+'" y="'+(n.y+3)+'" text-anchor="middle" font-size="8" font-weight="700" fill="#fff" font-family="Calibri,sans-serif">'+n.score+'</text>';
-      s += '<text x="'+n.x+'" y="'+(n.y+n.r+11)+'" text-anchor="middle" font-size="8.5" fill="rgba(255,255,255,0.65)" font-family="Calibri,sans-serif">'+n.label+'</text>';
-    });
-    s += '<circle cx="14" cy="276" r="4" fill="#E24B4A"/><text x="21" y="280" font-size="8" fill="rgba(255,255,255,0.4)" font-family="Calibri,sans-serif">Entity</text>';
-    s += '<circle cx="65" cy="276" r="4" fill="#1E50B4"/><text x="72" y="280" font-size="8" fill="rgba(255,255,255,0.4)" font-family="Calibri,sans-serif">Channel</text>';
-    s += '<circle cx="125" cy="276" r="4" fill="#E67E22"/><text x="132" y="280" font-size="8" fill="rgba(255,255,255,0.4)" font-family="Calibri,sans-serif">Alert</text>';
-    s += '</svg>';
+    var channels=[]; alerts.forEach(function(a){if(a.channel&&channels.indexOf(a.channel)<0)channels.push(a.channel);});
+    var nodeColor=score>=90?"#E24B4A":score>=70?"#E67E22":"#1EA064";
+    var chanColors={"Wire Transfer":"#1E50B4","Cash Deposit":"#7832B4","Fintech API":"#0F6E56","Mobile Banking":"#B8490A","FX/Treasury":"#BA7517","Trade Finance":"#5a5a56"};
+    var entityLabel=(c.entity||"Entity").length>16?(c.entity||"Entity").substring(0,14)+"...":(c.entity||"Entity");
+    var nodes=[{id:"E0",label:entityLabel,x:200,y:145,r:28,color:nodeColor,type:"entity",score:score}];
+    var edges=[];
+    channels.slice(0,4).forEach(function(ch,i){var angle=-Math.PI*0.6+i*(Math.PI*1.2/Math.max(channels.length-1,1));var nx=200+120*Math.cos(angle),ny=145+95*Math.sin(angle);nodes.push({id:"C"+i,label:ch.replace(" Transfer","").replace(" Banking",""),x:nx,y:ny,r:17,color:chanColors[ch]||"#444",type:"channel"});edges.push({from:"E0",to:"C"+i});});
+    alerts.slice(0,5).forEach(function(a,i){var angle=Math.PI*0.2+i*(Math.PI*0.6/Math.max(alerts.length-1,1));var nx=200+130*Math.cos(angle),ny=145+105*Math.sin(angle);var ac=(a.score||0)>=90?"#E24B4A":(a.score||0)>=70?"#E67E22":"#1EA064";nodes.push({id:"A"+i,label:a.id||("ALT-"+i),x:nx,y:ny,r:14,color:ac,type:"alert",score:a.score||0});edges.push({from:"E0",to:"A"+i});});
+    var s='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 290" style="width:100%;height:200px;background:var(--bg1);border-radius:8px">';
+    s+='<defs><pattern id="g" width="20" height="20" patternUnits="userSpaceOnUse"><path d="M20 0L0 0 0 20" fill="none" stroke="rgba(255,255,255,0.03)" stroke-width="1"/></pattern></defs><rect width="400" height="290" fill="url(#g)"/>';
+    edges.forEach(function(e){var fn=nodes.filter(function(n){return n.id===e.from;})[0];var tn=nodes.filter(function(n){return n.id===e.to;})[0];if(fn&&tn)s+='<line x1="'+fn.x+'" y1="'+fn.y+'" x2="'+tn.x+'" y2="'+tn.y+'" stroke="rgba(255,255,255,0.15)" stroke-width="1.5" stroke-dasharray="4,3"/>';});
+    nodes.forEach(function(n){s+='<circle cx="'+n.x+'" cy="'+n.y+'" r="'+(n.r+5)+'" fill="'+n.color+'" opacity="0.12"/>';s+='<circle cx="'+n.x+'" cy="'+n.y+'" r="'+n.r+'" fill="'+n.color+'" stroke="rgba(255,255,255,0.2)" stroke-width="1.5"/>';if(n.type==="entity")s+='<text x="'+n.x+'" y="'+(n.y+4)+'" text-anchor="middle" font-size="11" font-weight="700" fill="#fff" font-family="Calibri,sans-serif">'+n.score+'</text>';else if(n.type==="alert"&&n.score)s+='<text x="'+n.x+'" y="'+(n.y+3)+'" text-anchor="middle" font-size="8" font-weight="700" fill="#fff" font-family="Calibri,sans-serif">'+n.score+'</text>';s+='<text x="'+n.x+'" y="'+(n.y+n.r+11)+'" text-anchor="middle" font-size="8.5" fill="rgba(255,255,255,0.65)" font-family="Calibri,sans-serif">'+n.label+'</text>';});
+    s+='<circle cx="14" cy="276" r="4" fill="#E24B4A"/><text x="21" y="280" font-size="8" fill="rgba(255,255,255,0.4)" font-family="Calibri,sans-serif">Entity</text><circle cx="65" cy="276" r="4" fill="#1E50B4"/><text x="72" y="280" font-size="8" fill="rgba(255,255,255,0.4)" font-family="Calibri,sans-serif">Channel</text><circle cx="125" cy="276" r="4" fill="#E67E22"/><text x="132" y="280" font-size="8" fill="rgba(255,255,255,0.4)" font-family="Calibri,sans-serif">Alert</text></svg>';
     return s;
   }
 
-  // ── Build page HTML using DOM methods (no quote nesting issues) ───────────
   var container = document.createElement("div");
 
-  // Header row
+  // Header
   var hdr = document.createElement("div");
-  hdr.style.cssText = "display:flex;align-items:center;gap:8px;margin-bottom:14px";
+  hdr.style.cssText = "display:flex;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap";
   var backBtn = document.createElement("button");
   backBtn.className = "btn";
   backBtn.textContent = "\u2190 Back";
-  backBtn.onclick = function(){ window.go("cases"); };
+  backBtn.onclick = function(){ window.go(isSupervisor ? "supqueue" : "cases"); };
   var cidSpan = document.createElement("span");
   cidSpan.style.cssText = "font-family:monospace;font-size:13px;font-weight:500";
   cidSpan.textContent = cid;
   hdr.appendChild(backBtn);
   hdr.appendChild(cidSpan);
   hdr.innerHTML += " " + pb(c.priority||"low") + " " + sb(c.status||"open");
+  if (isEscalated) hdr.innerHTML += ' <span style="background:rgba(30,80,180,0.2);color:#5b8dee;border:1px solid rgba(30,80,180,0.4);border-radius:12px;padding:2px 10px;font-size:11px;font-weight:600">\u25b2 Escalated to Supervisor</span>';
+  if (isCleared)   hdr.innerHTML += ' <span style="background:rgba(90,90,86,0.25);color:#9a9a96;border:1px solid rgba(90,90,86,0.35);border-radius:12px;padding:2px 10px;font-size:11px;font-weight:600">\u2715 Cleared</span>';
+  if (isViewOnly)  hdr.innerHTML += ' <span style="background:rgba(162,45,45,0.12);color:var(--tx2);border:1px solid rgba(162,45,45,0.2);border-radius:12px;padding:2px 10px;font-size:11px">&#128274; Read-only</span>';
+  if (isSupervisor && isEscalated) hdr.innerHTML += ' <span style="background:rgba(30,164,100,0.12);color:#1EA064;border:1px solid rgba(30,164,100,0.3);border-radius:12px;padding:2px 10px;font-size:11px;font-weight:600">&#128100; Supervisor Review</span>';
+  if (c.manual_sar) hdr.innerHTML += ' <span style="background:rgba(186,117,23,0.2);color:#E67E22;border:1px solid rgba(186,117,23,0.3);border-radius:12px;padding:2px 10px;font-size:11px;font-weight:600">&#128196; Manual SAR</span>';
   container.appendChild(hdr);
 
-  // Row 1: details + graph
   var row1 = document.createElement("div");
-  row1.className = "g2";
-  row1.style.marginBottom = "14px";
+  row1.className = "g2"; row1.style.marginBottom = "14px";
 
-  // LEFT: case details card
-  var detCard = document.createElement("div");
-  detCard.className = "card";
-  var fileBtn = _userPerms.has("file_sar")
-    ? '<button class="btn primary" id="fileSarBtn">&#128203; File SAR</button>'
-    : '<div style="font-size:11px;padding:6px 10px;background:var(--bg2);border-radius:6px;color:var(--tx2)">&#128274; SAR requires supervisor</div>';
-  var reviewBtn = _userPerms.has("update_case_status") ? '<button class="btn success" id="reviewBtn">Mark in review</button>' : "";
-  var assignBtn = _userPerms.has("file_sar") ? '<button class="btn warn" id="assignBtn">Re-assign</button>' : "";
-  detCard.innerHTML = '<div class="ch"><span class="ct">Case details</span></div><div class="cb">'
-    + '<div style="margin-bottom:10px"><div class="det-title">Entity</div><div style="font-size:14px;font-weight:600">' + (c.entity||"—") + "</div></div>"
-    + '<div style="margin-bottom:10px"><div class="det-title">Typology</div><div style="display:inline-block;background:rgba(231,126,34,0.15);color:#E67E22;border:1px solid rgba(231,126,34,0.3);border-radius:4px;padding:2px 8px;font-size:12px;font-weight:500">' + (c.typology||"—") + "</div></div>"
-    + '<div style="margin-bottom:10px"><div class="det-title">Risk Score</div><div style="font-size:22px;font-weight:700;color:' + scoreColor + '">' + score + '<span style="font-size:12px;color:var(--tx2)">/100</span></div></div>'
-    + '<div style="margin-bottom:10px"><div class="det-title">Linked Alerts</div><div style="font-size:13px">' + alerts.length + " alert" + (alerts.length!==1?"s":"") + "</div></div>"
-    + '<div style="margin-bottom:14px"><div class="det-title">Officer</div><div style="font-size:13px">' + (c.officer||"Unassigned") + "</div></div>"
-    + '<div class="btn-row">' + fileBtn + reviewBtn + assignBtn + '<button class="btn" id="closeBtn">Close</button></div>'
-    + "</div>";
+  var detCard = document.createElement("div"); detCard.className = "card";
+
+  var actionBtns = "";
+  if (isSupervisor && isEscalated) {
+    actionBtns = '<button class="btn primary" id="supFileSarBtn">&#128203; File SAR with FinCEN</button>'
+      + '<button class="btn" id="supReturnBtn" style="color:#1EA064;border-color:rgba(30,164,100,0.4)">&#8617; Return to Officer</button>'
+      + '<button class="btn" id="supClearBtn" style="color:#E24B4A;border-color:rgba(226,75,74,0.3)">\u2715 Clear</button>'
+      + '<button class="btn" id="closeBtn">Close</button>';
+  } else if (!isLocked) {
+    var reviewToggleBtn2 = (c.status === "open")
+      ? '<button class="btn" id="reviewToggleBtn" style="color:#E67E22;border-color:rgba(231,126,34,0.4)">&#9679; Under Review</button>'
+      : '<button class="btn" id="reviewToggleBtn" style="color:#5b8dee;border-color:rgba(30,80,180,0.4)">&#9673; Mark Open</button>';
+    actionBtns = '<button class="btn primary" id="escalateBtn">\u25b2 Escalate to Supervisor</button>'
+      + '<button class="btn" id="clearCaseBtn" style="background:rgba(162,45,45,0.15);color:#E24B4A;border:1px solid rgba(226,75,74,0.3)">\u2715 Clear Case</button>'
+      + reviewToggleBtn2
+      + (_userPerms.has("file_sar") ? '<button class="btn warn" id="assignBtn">Re-assign</button>' : "")
+      + '<button class="btn" id="closeBtn">&#8592; Back</button>';
+  } else {
+    var statusLabel = isEscalated ? "\u25b2 Escalated" : isFiled ? "\u2713 Filed" : "\u2715 Cleared";
+    actionBtns = '<button class="btn" disabled style="opacity:0.4;cursor:not-allowed">' + statusLabel + '</button>'
+      + '<button class="btn" id="closeBtn">Close</button>';
+  }
+
+    // Detect manual SAR for extended fields display
+  var isManualSAR = c.manual_sar === true || c.source === "manual_sar_editor";
+
+  detCard.innerHTML = '<div class="ch"><span class="ct">Case details</span>'
+    + (isManualSAR ? '<span style="background:rgba(186,117,23,0.2);color:#E67E22;border:1px solid rgba(186,117,23,0.3);border-radius:10px;padding:1px 8px;font-size:10px;font-weight:600;margin-left:8px">Manual SAR</span>' : '')
+    + (isViewOnly ? '<span style="font-size:11px;color:var(--tx2);margin-left:8px">\xb7 View only</span>' : '')
+    + '</div><div class="cb">'
+    + '<div style="margin-bottom:10px"><div class="det-title">Entity</div><div style="font-size:14px;font-weight:600">' + (c.entity||"\u2014") + "</div></div>"
+    + (isManualSAR && c.entity_type ? '<div style="margin-bottom:10px"><div class="det-title">Entity Type</div><div style="font-size:13px">' + c.entity_type + "</div></div>" : "")
+    + (isManualSAR && c.address ? '<div style="margin-bottom:10px"><div class="det-title">Address</div><div style="font-size:12px;color:var(--tx2)">' + c.address + "</div></div>" : "")
+    + (isManualSAR && c.ein_dob ? '<div style="margin-bottom:10px"><div class="det-title">EIN / SSN / DOB</div><div style="font-size:12px;font-family:monospace">' + c.ein_dob + "</div></div>" : "")
+    + (isManualSAR && c.account_no ? '<div style="margin-bottom:10px"><div class="det-title">Account No.</div><div style="font-size:12px;font-family:monospace">' + c.account_no + "</div></div>" : "")
+    + '<div style="margin-bottom:10px"><div class="det-title">Typology</div><div style="display:inline-block;background:rgba(231,126,34,0.15);color:#E67E22;border:1px solid rgba(231,126,34,0.3);border-radius:4px;padding:2px 8px;font-size:12px;font-weight:500">' + (c.typology||"\u2014") + "</div></div>"
+    + (isManualSAR && c.amount ? '<div style="margin-bottom:10px"><div class="det-title">Amount</div><div style="font-size:15px;font-weight:700;color:#E67E22">$' + parseFloat(c.amount||0).toLocaleString("en-US",{minimumFractionDigits:2}) + "</div></div>" : '<div style="margin-bottom:10px"><div class="det-title">Risk Score</div><div style="font-size:22px;font-weight:700;color:' + scoreColor + '">' + score + '<span style="font-size:12px;color:var(--tx2)">/100</span></div></div>')
+    + (isManualSAR && c.date_range ? '<div style="margin-bottom:10px"><div class="det-title">Activity Period</div><div style="font-size:12px">' + c.date_range + "</div></div>" : "")
+    + (isManualSAR && c.channels ? '<div style="margin-bottom:10px"><div class="det-title">Channels</div><div style="font-size:12px">' + c.channels + "</div></div>" : (!isManualSAR ? '<div style="margin-bottom:10px"><div class="det-title">Linked Alerts</div><div style="font-size:13px">' + alerts.length + " alert" + (alerts.length!==1?"s":"") + "</div></div>" : ""))
+    + '<div style="margin-bottom:10px"><div class="det-title">Filing Officer</div><div style="font-size:13px">' + (c.officer||"Unassigned") + "</div></div>"
+    + (isEscalated ? '<div style="margin-bottom:8px"><div class="det-title">Escalated by</div><div style="font-size:13px;color:#5b8dee">' + (c.escalated_by||"\u2014") + '</div></div>' : "")
+    + (isEscalated && c.escalated_at ? '<div style="margin-bottom:14px"><div class="det-title">Escalated at</div><div style="font-size:12px;color:var(--tx2)">' + new Date(c.escalated_at).toLocaleString("en-GB",{day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"}) + '</div></div>' : "")
+    + (isCleared ? '<div style="margin-bottom:8px"><div class="det-title">Cleared by</div><div style="font-size:13px;color:#9a9a96">' + (c.cleared_by||"\u2014") + '</div></div>' : "")
+    + (isCleared && c.clear_reason ? '<div style="margin-bottom:14px"><div class="det-title">Reason</div><div style="font-size:12px;color:var(--tx2)">' + c.clear_reason + '</div></div>' : "")
+    + '<div class="btn-row" style="flex-wrap:wrap;gap:6px">' + actionBtns + '</div></div>';
   row1.appendChild(detCard);
 
-  // RIGHT: entity graph card
-  var graphCard = document.createElement("div");
-  graphCard.className = "card";
-  graphCard.innerHTML = '<div class="ch"><span class="ct">Entity graph</span><span style="font-size:11px;color:var(--tx2);font-weight:400;margin-left:8px">· Transaction network</span></div>'
-    + '<div class="cb" style="padding:10px">' + buildGraph()
-    + '<div style="margin-top:6px;font-size:11px;color:var(--tx2)">Center = entity score · Top arc = channels · Bottom arc = alerts</div></div>';
+  var graphCard = document.createElement("div"); graphCard.className = "card";
+  if (c.manual_sar) {
+    // Manual SARs: show summary info instead of ML graph
+    var amtFmt = c.amount ? '$' + parseFloat(c.amount).toLocaleString('en-US',{minimumFractionDigits:2}) : 'N/A';
+    graphCard.innerHTML = '<div class="ch"><span class="ct">Manual SAR Summary</span><span style="font-size:11px;color:var(--tx2);margin-left:8px">\xb7 Submitted via SAR Editor</span></div>'
+      + '<div class="cb" style="padding:14px">'
+      + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">'
+      + '<div style="background:var(--bg2);border-radius:8px;padding:12px"><div style="font-size:10px;color:var(--tx2);font-weight:500;margin-bottom:4px">AMOUNT</div><div style="font-size:18px;font-weight:700;color:#E67E22">' + amtFmt + '</div></div>'
+      + '<div style="background:var(--bg2);border-radius:8px;padding:12px"><div style="font-size:10px;color:var(--tx2);font-weight:500;margin-bottom:4px">ACTIVITY PERIOD</div><div style="font-size:13px;font-weight:600">' + (c.date_range||'—') + '</div></div>'
+      + '<div style="background:var(--bg2);border-radius:8px;padding:12px"><div style="font-size:10px;color:var(--tx2);font-weight:500;margin-bottom:4px">CHANNELS</div><div style="font-size:13px">' + (c.channels||'—') + '</div></div>'
+      + '<div style="background:var(--bg2);border-radius:8px;padding:12px"><div style="font-size:10px;color:var(--tx2);font-weight:500;margin-bottom:4px">ENTITY TYPE</div><div style="font-size:13px">' + (c.entity_type||'Business') + '</div></div>'
+      + '<div style="background:var(--bg2);border-radius:8px;padding:12px;grid-column:span 2"><div style="font-size:10px;color:var(--tx2);font-weight:500;margin-bottom:4px">SOURCE</div><div style="font-size:12px;color:var(--tx2)">Manually submitted via SAR Editor by ' + (c.officer||'Officer') + '. Not generated by ML monitoring system. Review narrative and supporting documents before filing.</div></div>'
+      + '</div></div>';
+  } else {
+    graphCard.innerHTML = '<div class="ch"><span class="ct">Entity graph</span><span style="font-size:11px;color:var(--tx2);margin-left:8px">\xb7 Transaction network</span></div>'
+      + '<div class="cb" style="padding:10px">' + buildGraph()
+      + '<div style="margin-top:6px;font-size:11px;color:var(--tx2)">Center = entity score \xb7 Top arc = channels \xb7 Bottom arc = alerts</div></div>';
+  }
   row1.appendChild(graphCard);
   container.appendChild(row1);
 
-  // Row 2: narrative + alerts
-  var row2 = document.createElement("div");
-  row2.className = "g2";
+  var row2 = document.createElement("div"); row2.className = "g2"; row2.style.marginBottom = "14px";
 
-  // LEFT: narrative
-  var narrative = buildNarrative();
-  var narCard = document.createElement("div");
-  narCard.className = "card";
-  narCard.innerHTML = '<div class="ch"><span class="ct">Investigation narrative</span><span style="font-size:11px;color:var(--tx2);font-weight:400;margin-left:8px">· Auto-generated · BSA/AML</span></div>'
-    + '<div class="cb"><div style="font-size:11.5px;color:var(--tx2);line-height:1.8;white-space:pre-wrap;background:var(--bg2);padding:14px;border-radius:6px;border-left:3px solid #1E50B4;max-height:280px;overflow-y:auto" id="caseNarrative"></div></div>';
+  var narEditable = !isViewOnly;
+  var editBtnHtml = narEditable
+    ? '<button class="btn" id="editNarBtn" style="margin-left:auto;font-size:11px;padding:3px 10px">&#9998; Edit</button>'
+    : '<button class="btn" disabled style="opacity:0.35;cursor:not-allowed;margin-left:auto;font-size:11px;padding:3px 10px">&#9998; Edit</button>';
+  var narCard = document.createElement("div"); narCard.className = "card";
+  narCard.innerHTML = '<div class="ch" style="align-items:center"><span class="ct">Investigation narrative</span>'
+    + '<span style="font-size:11px;color:var(--tx2);font-weight:400;margin-left:8px">\xb7 BSA/AML record</span>'
+    + editBtnHtml + '</div><div class="cb">'
+    + '<div id="narView" style="font-size:11.5px;color:var(--tx2);line-height:1.8;white-space:pre-wrap;background:var(--bg2);padding:14px;border-radius:6px;border-left:3px solid ' + (isViewOnly?"#5a5a56":"#1E50B4") + ';max-height:260px;overflow-y:auto"></div>'
+    + '<textarea id="narEdit" style="display:none;width:100%;min-height:200px;background:var(--bg2);color:var(--tx1);border:1px solid #1E50B4;border-radius:6px;padding:12px;font-size:11.5px;line-height:1.8;resize:vertical;box-sizing:border-box"></textarea>'
+    + '<div id="narSaveRow" style="display:none;margin-top:8px;gap:8px">'
+    + '<button class="btn primary" id="saveNarBtn" style="font-size:12px">&#128190; Save Narrative</button>'
+    + '<button class="btn" id="cancelNarBtn" style="font-size:12px">Cancel</button></div></div>';
   row2.appendChild(narCard);
 
-  // RIGHT: linked alerts
-  var altCard = document.createElement("div");
-  altCard.className = "card";
+  var altCard = document.createElement("div"); altCard.className = "card";
   var altHtml = '<div class="ch"><span class="ct">Linked alerts</span></div><div class="cb" id="case-alerts">';
   if (alerts.length) {
     alerts.forEach(function(a) {
-      altHtml += '<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:6px;border:1px solid var(--bdr);margin-bottom:6px;font-size:12px;cursor:pointer" '
-        + 'data-alertid="' + a.id + '">'
-        + '<span style="font-family:monospace;font-size:11px;color:var(--tx2)">' + a.id + "</span>"
-        + '<span style="flex:1;font-weight:500">' + a.entity + "</span>"
-        + '<span style="font-weight:700;font-size:14px;color:' + sc(a.score) + '">' + a.score + "</span>"
-        + " " + pb(a.priority) + "</div>";
+      altHtml += '<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:6px;border:1px solid var(--bdr);margin-bottom:6px;font-size:12px;cursor:pointer" data-alertid="' + a.id + '">'
+        + '<span style="font-family:monospace;font-size:11px;color:var(--tx2)">' + a.id + '</span>'
+        + '<span style="flex:1;font-weight:500">' + a.entity + '</span>'
+        + '<span style="font-weight:700;font-size:14px;color:' + sc(a.score) + '">' + a.score + '</span>'
+        + ' ' + pb(a.priority) + '</div>';
     });
-  } else {
-    altHtml += '<div style="font-size:12px;color:var(--tx2);padding:8px">No alert details available</div>';
-  }
+  } else { altHtml += '<div style="font-size:12px;color:var(--tx2);padding:8px">No linked alerts</div>'; }
   altHtml += "</div>";
   altCard.innerHTML = altHtml;
   row2.appendChild(altCard);
   container.appendChild(row2);
 
-  // ── Render to DOM ─────────────────────────────────────────────────────────
+  var docCard = document.createElement("div"); docCard.className = "card"; docCard.style.marginBottom = "14px";
+  var uploadSection = isViewOnly
+    ? '<div style="font-size:12px;color:var(--tx2);padding:4px 0">&#128274; Upload disabled</div>'
+    : (isSupervisor && isEscalated
+        ? '<div style="font-size:12px;color:var(--tx2);padding:4px 0">&#128274; Documents are read-only while case is under supervisor review</div>'
+        : '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">'
+          + '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;background:var(--bg2);border:1px dashed var(--bdr);border-radius:8px;padding:10px 16px;font-size:12px;color:var(--tx2)" id="docUploadLabel">'
+          + '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="width:16px;height:16px"><path d="M8 1v10M4 5l4-4 4 4"/><path d="M2 11v2a1 1 0 001 1h10a1 1 0 001-1v-2"/></svg>'
+          + '<span>Choose file (PDF, DOCX, PNG, JPG)</span>'
+          + '<input type="file" id="docFileInput" accept=".pdf,.docx,.doc,.png,.jpg,.jpeg" style="display:none"></label>'
+          + '<button class="btn primary" id="docUploadBtn" style="font-size:12px" disabled>&#8593; Upload</button>'
+          + '<span id="docUploadMsg" style="font-size:11px;color:var(--tx2)"></span>'
+          + '</div>');
+  docCard.innerHTML = '<div class="ch"><span class="ct">Supporting documents</span>'
+    + '<span style="font-size:11px;color:var(--tx2);font-weight:400;margin-left:8px">\xb7 Evidence attached to this case</span>'
+    + '</div><div class="cb"><div id="docList" style="margin-bottom:10px;min-height:20px"></div>'
+    + uploadSection + '</div>';
+  container.appendChild(docCard);
+
   var ct = document.getElementById("content");
   ct.innerHTML = "";
   ct.appendChild(container);
 
-  // Set narrative text safely (avoid XSS and escaping issues)
-  var narDiv = document.getElementById("caseNarrative");
-  if (narDiv) narDiv.textContent = narrative;
+  var narView = document.getElementById("narView");
+  var narEdit = document.getElementById("narEdit");
+  var narSaveRow = document.getElementById("narSaveRow");
+  if (narView) narView.textContent = narrativeText;
+  if (narEdit) narEdit.value = narrativeText;
 
-  // Wire up buttons after DOM is set
-  var fb = document.getElementById("fileSarBtn");
-  if (fb) fb.onclick = function(){ fileCase(cid); };
-  var rb = document.getElementById("reviewBtn");
-  if (rb) rb.onclick = function(){ updateCaseStatus(cid, "review"); };
-  var ab = document.getElementById("assignBtn");
-  if (ab) ab.onclick = function(){ showCaseAssignDialog(cid); };
-  var cb = document.getElementById("closeBtn");
-  if (cb) cb.onclick = function(){ window.go("cases"); };
+  loadCaseDocs(cid);
 
-  // Wire up alert clicks
-  var altDivs = document.querySelectorAll("[data-alertid]");
-  altDivs.forEach(function(div) {
-    var aid = div.getAttribute("data-alertid");
-    div.onmouseover = function(){ this.style.background = "var(--bg2)"; };
-    div.onmouseout  = function(){ this.style.background = ""; };
-    div.onclick = function(){ openAlertDetail(aid); window._detailAlertId = aid; window.go("alerts"); };
+  var closeBtn = document.getElementById("closeBtn");
+  if (closeBtn) closeBtn.onclick = function(){ window.go(isSupervisor ? "supqueue" : "cases"); };
+
+  var assignBtn2 = document.getElementById("assignBtn");
+  if (assignBtn2) assignBtn2.onclick = function(){ showCaseAssignDialog(cid); };
+
+  // Under Review / Mark Open toggle
+  var reviewToggleBtn = document.getElementById("reviewToggleBtn");
+  if (reviewToggleBtn) reviewToggleBtn.onclick = async function() {
+    var newStatus = (c.status === "open") ? "review" : "open";
+    var officer = (_currentUser||{}).name || "Officer";
+    var r = await api("/api/cases/" + cid + "/set_review", {
+      method: "POST",
+      body: JSON.stringify({status: newStatus, officer: officer})
+    });
+    if (r && r.ok) {
+      c.status = newStatus;
+      toast(newStatus === "review" ? "Case marked Under Review" : "Case marked Open");
+      // Update the button
+      if (newStatus === "review") {
+        reviewToggleBtn.textContent = "\u29BF Mark Open";
+        reviewToggleBtn.style.color = "#5b8dee";
+        reviewToggleBtn.style.borderColor = "rgba(30,80,180,0.4)";
+      } else {
+        reviewToggleBtn.innerHTML = "&#9679; Under Review";
+        reviewToggleBtn.style.color = "#E67E22";
+        reviewToggleBtn.style.borderColor = "rgba(231,126,34,0.4)";
+      }
+      // Update status badge in header
+      setTimeout(function(){ window.go("cases"); }, 1200);
+    } else {
+      toast("Status update failed", "error");
+    }
+  };
+
+  var esBtn = document.getElementById("escalateBtn");
+  if (esBtn) esBtn.onclick = function() {
+    var narCur = (narView||{}).textContent || narrativeText;
+    var modal = document.createElement("div");
+    modal.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:999;display:flex;align-items:center;justify-content:center";
+    modal.innerHTML = '<div style="background:var(--bg1);border-radius:12px;padding:24px;width:380px;box-shadow:0 20px 60px rgba(0,0,0,.4)">'
+      + '<div style="font-size:15px;font-weight:600;margin-bottom:4px">\u25b2 Escalate to Supervisor</div>'
+      + '<div style="font-size:12px;color:var(--tx2);margin-bottom:16px">Case ' + cid + ' will be sent to the Supervisor Queue.</div>'
+      + '<label style="font-size:11px;color:var(--tx2);display:block;margin-bottom:4px">Notes for supervisor</label>'
+      + '<textarea id="escNotes" style="width:100%;height:80px;background:var(--bg2);color:var(--tx1);border:1px solid var(--bdr);border-radius:6px;padding:8px;font-size:12px;box-sizing:border-box;margin-bottom:16px"></textarea>'
+      + '<div style="display:flex;gap:8px;justify-content:flex-end">'
+      + '<button class="btn" onclick="this.closest(&quot;div[style*=fixed]&quot;).remove()">Cancel</button>'
+      + '<button class="btn primary" id="confirmEscBtn">\u25b2 Escalate</button></div></div>';
+    document.body.appendChild(modal);
+    document.getElementById("confirmEscBtn").onclick = async function() {
+      var notes=(document.getElementById("escNotes")||{}).value||"";
+      var officer=(window._currentUser||{}).name||"Officer";
+      var r=await api("/api/cases/"+cid+"/escalate",{method:"POST",body:JSON.stringify({officer,notes,narrative:narCur})});
+      modal.remove();
+      if(r&&r.ok){toast("Case "+cid+" escalated");setTimeout(function(){window.go("cases");},800);}
+      else toast("Escalation failed","error");
+    };
+  };
+
+  var clrBtn = document.getElementById("clearCaseBtn");
+  if (clrBtn) clrBtn.onclick = function() {
+    var modal = document.createElement("div");
+    modal.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:999;display:flex;align-items:center;justify-content:center";
+    modal.innerHTML = '<div style="background:var(--bg1);border-radius:12px;padding:24px;width:380px;box-shadow:0 20px 60px rgba(0,0,0,.4)">'
+      + '<div style="font-size:15px;font-weight:600;margin-bottom:4px;color:#E24B4A">\u2715 Clear Case</div>'
+      + '<div style="font-size:12px;color:var(--tx2);margin-bottom:16px">Case stays in Case Management with a cleared badge and is logged to Case History.</div>'
+      + '<label style="font-size:11px;color:var(--tx2);display:block;margin-bottom:4px">Reason for clearing</label>'
+      + '<textarea id="clearReason" style="width:100%;height:80px;background:var(--bg2);color:var(--tx1);border:1px solid var(--bdr);border-radius:6px;padding:8px;font-size:12px;box-sizing:border-box;margin-bottom:16px"></textarea>'
+      + '<div style="display:flex;gap:8px;justify-content:flex-end">'
+      + '<button class="btn" onclick="this.closest(&quot;div[style*=fixed]&quot;).remove()">Cancel</button>'
+      + '<button class="btn" id="confirmClearBtn" style="background:rgba(162,45,45,0.2);color:#E24B4A;border:1px solid rgba(226,75,74,0.4)">\u2715 Clear</button></div></div>';
+    document.body.appendChild(modal);
+    document.getElementById("confirmClearBtn").onclick = async function() {
+      var reason=(document.getElementById("clearReason")||{}).value||"No suspicious activity";
+      var officer=(window._currentUser||{}).name||"Officer";
+      var r=await api("/api/cases/"+cid+"/clear",{method:"POST",body:JSON.stringify({officer,reason})});
+      modal.remove();
+      if(r&&r.ok){toast("Case "+cid+" cleared");setTimeout(function(){window.go("cases");},800);}
+      else toast("Clear failed","error");
+    };
+  };
+
+  var supFile = document.getElementById("supFileSarBtn");
+  if (supFile) supFile.onclick = function() {
+    if (!confirm("File SAR with FinCEN for case " + cid + "? This is permanent.")) return;
+    var officer=(_currentUser||{}).name||"Supervisor";
+    api("/api/cases/"+cid+"/supervisor_action",{method:"POST",body:JSON.stringify({action:"file_sar",officer})}).then(function(r){
+      if(r&&r.ok){toast("SAR filed - FinCEN ref: "+(r.fincen_ref||"pending"));setTimeout(function(){window.go("supqueue");},800);}
+      else toast("SAR filing failed","error");
+    });
+  };
+
+  var supReturn = document.getElementById("supReturnBtn");
+  if (supReturn) supReturn.onclick = function() {
+    var notes=prompt("Return case "+cid+" to officer "+c.officer+"?\nAdd a note (optional):","");
+    if (notes===null) return;
+    var officer=(_currentUser||{}).name||"Supervisor";
+    api("/api/cases/"+cid+"/supervisor_action",{method:"POST",body:JSON.stringify({action:"return",officer,notes})}).then(function(r){
+      if(r&&r.ok){toast("Case returned to "+c.officer);setTimeout(function(){window.go("supqueue");},800);}
+      else toast("Return failed","error");
+    });
+  };
+
+  var supClear = document.getElementById("supClearBtn");
+  if (supClear) supClear.onclick = function() {
+    var reason=prompt("Clear case "+cid+" without SAR?\nReason:","No suspicious activity - cleared by supervisor");
+    if (reason===null) return;
+    var officer=(_currentUser||{}).name||"Supervisor";
+    api("/api/cases/"+cid+"/supervisor_action",{method:"POST",body:JSON.stringify({action:"clear",officer,notes:reason})}).then(function(r){
+      if(r&&r.ok){toast("Case cleared");setTimeout(function(){window.go("supqueue");},800);}
+      else toast("Clear failed","error");
+    });
+  };
+
+  var editBtn = document.getElementById("editNarBtn");
+  if (editBtn && narEditable) {
+    editBtn.onclick = function() {
+      var isEditing = narEdit && narEdit.style.display !== "none";
+      if (!isEditing) {
+        if(narView) narView.style.display="none";
+        if(narEdit) narEdit.style.display="block";
+        if(narSaveRow) narSaveRow.style.display="flex";
+        editBtn.textContent="\u2715 Cancel"; editBtn.style.color="#E24B4A";
+      } else {
+        if(narView) narView.style.display="block";
+        if(narEdit){narEdit.style.display="none"; narEdit.value=narView.textContent;}
+        if(narSaveRow) narSaveRow.style.display="none";
+        editBtn.textContent="\u270E Edit"; editBtn.style.color="";
+      }
+    };
+  }
+
+  var saveNarBtn = document.getElementById("saveNarBtn");
+  if (saveNarBtn) saveNarBtn.onclick = async function() {
+    var newText=narEdit?narEdit.value:"";
+    var officer=(window._currentUser||{}).name||"Officer";
+    var r=await api("/api/cases/"+cid+"/save_narrative",{method:"POST",body:JSON.stringify({narrative:newText,officer})});
+    if(r&&r.ok){
+      if(narView) narView.textContent=newText; narrativeText=newText;
+      if(narView) narView.style.display="block";
+      if(narEdit) narEdit.style.display="none";
+      if(narSaveRow) narSaveRow.style.display="none";
+      if(editBtn){editBtn.textContent="\u270E Edit"; editBtn.style.color="";}
+      toast("Narrative saved");
+    } else toast("Save failed","error");
+  };
+
+  var cancelNarBtn = document.getElementById("cancelNarBtn");
+  if (cancelNarBtn) cancelNarBtn.onclick = function() {
+    if(narView) narView.style.display="block";
+    if(narEdit){narEdit.style.display="none"; narEdit.value=narrativeText;}
+    if(narSaveRow) narSaveRow.style.display="none";
+    if(editBtn){editBtn.textContent="\u270E Edit"; editBtn.style.color="";}
+  };
+
+  document.querySelectorAll("[data-alertid]").forEach(function(div){
+    var aid=div.getAttribute("data-alertid");
+    div.onmouseover=function(){this.style.background="var(--bg2)";};
+    div.onmouseout=function(){this.style.background="";};
+    div.onclick=function(){openAlertDetail(aid);window._detailAlertId=aid;window.go("alerts");};
   });
+
+  if (!isLocked && !isSupervisor) {
+    var fileInput=document.getElementById("docFileInput");
+    var uploadBtn=document.getElementById("docUploadBtn");
+    var uploadMsg=document.getElementById("docUploadMsg");
+    var uploadLabel=document.getElementById("docUploadLabel");
+    if(fileInput) fileInput.onchange=function(){
+      if(fileInput.files&&fileInput.files[0]){
+        var f=fileInput.files[0];
+        if(uploadLabel) uploadLabel.querySelector("span").textContent=f.name+" ("+(f.size/1024).toFixed(1)+" KB)";
+        if(uploadBtn) uploadBtn.disabled=false; if(uploadMsg) uploadMsg.textContent="";
+      }
+    };
+    if(uploadBtn) uploadBtn.onclick=async function(){
+      if(!fileInput||!fileInput.files||!fileInput.files[0]) return;
+      var f=fileInput.files[0]; var officer=(_currentUser||{}).name||"Officer";
+      uploadBtn.disabled=true; uploadBtn.textContent="Uploading...";
+      var reader=new FileReader();
+      reader.onload=async function(e){
+        var b64=e.target.result.split(",")[1];
+        var r=await api("/api/cases/"+cid+"/documents/upload",{method:"POST",body:JSON.stringify({filename:f.name,content_type:f.type||"application/octet-stream",data:b64,officer,note:"Uploaded from case view"})});
+        uploadBtn.textContent="\u2191 Upload";
+        if(r&&r.ok){if(uploadMsg){uploadMsg.textContent="\u2713 Uploaded";uploadMsg.style.color="#1EA064";}if(uploadLabel) uploadLabel.querySelector("span").textContent="Choose file";fileInput.value="";uploadBtn.disabled=true;loadCaseDocs(cid);toast(f.name+" attached");}
+        else{if(uploadMsg){uploadMsg.textContent="Failed";uploadMsg.style.color="#E24B4A";}uploadBtn.disabled=false;}
+      };
+      reader.readAsDataURL(f);
+    };
+  }
+}
+
+async function loadCaseDocs(cid) {
+  var docList = document.getElementById("docList");
+  if (!docList) return;
+  var d = await api("/api/cases/" + cid + "/documents") || {};
+  var docs = d.documents || [];
+  if (!docs.length) {
+    docList.innerHTML = '<div style="font-size:12px;color:var(--tx2)">No documents attached yet.</div>';
+    return;
+  }
+  var html = '<div style="display:flex;flex-wrap:wrap;gap:8px">';
+  docs.forEach(function(doc) {
+    var ext = (doc.filename||"").split(".").pop().toLowerCase();
+    var isImg = (ext==="png"||ext==="jpg"||ext==="jpeg");
+    var icon = ext==="pdf"?"&#128196;":ext==="docx"||ext==="doc"?"&#128221;":isImg?"&#128444;":"&#128206;";
+    html += '<div style="display:flex;align-items:center;gap:6px;background:var(--bg2);border:1px solid var(--bdr);border-radius:6px;padding:6px 10px;font-size:12px">'
+      + '<span>' + icon + '</span>'
+      + '<span style="font-weight:500">' + (doc.filename||"File") + '</span>'
+      + '<span style="color:var(--tx2);font-size:10px">' + ((doc.size_kb||0).toFixed?doc.size_kb.toFixed(1):doc.size_kb||"?") + 'KB</span>'
+      + '<span style="color:var(--tx2);font-size:10px">\xb7 ' + (doc.uploaded_by||"") + '</span>'
+      + '<button class="btn" data-docid="' + doc.doc_id + '" data-docname="' + (doc.filename||"file") + '" data-isimg="' + isImg + '" style="font-size:10px;padding:2px 7px;margin-left:4px">' + (isImg ? "&#128065; View" : "&#8595; Download") + '</button>'
+      + '</div>';
+  });
+  html += '</div>';
+  docList.innerHTML = html;
+
+  document.querySelectorAll("[data-docid]").forEach(function(btn) {
+    btn.onclick = function() {
+      var docId=btn.getAttribute("data-docid");
+      var docName=btn.getAttribute("data-docname");
+      var isImg=btn.getAttribute("data-isimg")==="true";
+      fetch("/api/documents/"+docId+"/download",{headers:{"Authorization":"Bearer demo-no-auth"}})
+        .then(function(r){ return r.blob(); })
+        .then(function(blob) {
+          var url=URL.createObjectURL(blob);
+          if (isImg) {
+            var modal=document.createElement("div");
+            modal.style.cssText="position:fixed;inset:0;background:rgba(0,0,0,.8);z-index:999;display:flex;align-items:center;justify-content:center;cursor:pointer";
+            modal.innerHTML='<div style="max-width:90vw;max-height:90vh;text-align:center"><img src="'+url+'" style="max-width:100%;max-height:80vh;border-radius:8px"><div style="color:#fff;font-size:12px;margin-top:8px">'+docName+' \xb7 Click to close</div></div>';
+            modal.onclick=function(){modal.remove();URL.revokeObjectURL(url);};
+            document.body.appendChild(modal);
+          } else {
+            var a=document.createElement("a"); a.href=url; a.download=docName;
+            document.body.appendChild(a); a.click(); document.body.removeChild(a);
+            setTimeout(function(){URL.revokeObjectURL(url);},1000);
+          }
+        }).catch(function(){toast("Download failed","error");});
+    };
+  });
+}
+
+// ── Load and display case documents ──────────────────────────────────────────
+async function loadCaseDocs(cid) {
+  var docList = document.getElementById("docList");
+  if (!docList) return;
+  var d = await api("/api/cases/" + cid + "/documents") || {};
+  var docs = d.documents || [];
+  if (!docs.length) {
+    docList.innerHTML = '<div style="font-size:12px;color:var(--tx2)">No documents attached yet.</div>';
+    return;
+  }
+  var html = '<div style="display:flex;flex-wrap:wrap;gap:8px">';
+  docs.forEach(function(doc) {
+    var ext = (doc.filename||"").split(".").pop().toLowerCase();
+    var icon = ext==="pdf"?"\uD83D\uDCC4":ext==="docx"||ext==="doc"?"\uD83D\uDCDD":ext==="png"||ext==="jpg"||ext==="jpeg"?"\uD83D\uDDBC":"\uD83D\uDCCE";
+    html += '<div style="display:flex;align-items:center;gap:6px;background:var(--bg2);border:1px solid var(--bdr);border-radius:6px;padding:6px 10px;font-size:12px">'
+      + '<span>' + icon + '</span>'
+      + '<span style="font-weight:500">' + (doc.filename||"File") + '</span>'
+      + '<span style="color:var(--tx2);font-size:11px">' + ((doc.size_kb||0).toFixed?doc.size_kb.toFixed(1):doc.size_kb||"?") + ' KB</span>'
+      + '<span style="color:var(--tx2);font-size:10px">\xb7 ' + (doc.uploaded_by||"") + '</span>'
+      + '</div>';
+  });
+  html += '</div>';
+  docList.innerHTML = html;
 }
 
 async function fileCase(id) {
@@ -1387,39 +2158,385 @@ setInterval(checkHealth, 30000);
 
 // ── SAR Workbench ─────────────────────────────────────────────────────────
 async function sarWorkbench() {
-  const sarData = await api('/api/sar') || {};
-  const records = sarData.records || [];
-  $('content').innerHTML = `
-<div class="mrow">
-  <div class="mc"><div class="ml">SARs filed (30d)</div><div class="mv">${records.length}</div><div class="md">All filed on time</div></div>
-  <div class="mc"><div class="ml">Avg. filing time</div><div class="mv">6.2d</div><div class="md">From alert to SAR</div></div>
-  <div class="mc"><div class="ml">FinCEN acceptance</div><div class="mv">100%</div><div class="md">No rejections</div></div>
-  <div class="mc"><div class="ml">Narrative quality score</div><div class="mv">94%</div><div class="md">FinCEN feedback</div></div>
-</div>
-<div class="g2">
-<div class="card"><div class="ch"><span class="ct">Filed SARs</span></div>
-<table><thead><tr><th>SAR ID</th><th>Entity</th><th>Typology</th><th>Amount</th><th>Filed</th><th>FinCEN Ref</th><th>Officer</th><th></th></tr></thead><tbody>
-${records.length ? records.map(r=>`<tr>
-  <td style="font-family:monospace;font-size:11px">${r.id}</td>
-  <td style="font-weight:500">${r.entity}</td>
-  <td style="font-size:11px">${r.typology}</td>
-  <td style="font-weight:600">${fmt(r.amount||0)}</td>
-  <td style="font-size:11px;color:var(--tx2)">${(r.filed_date||'').split(' ')[0]}</td>
-  <td style="font-family:monospace;font-size:11px;color:var(--green)">${r.fincen_ref||'—'}</td>
-  <td style="font-size:12px">${r.officer||'—'}</td>
-  <td><button class="btn" onclick="generateSAR('${r.case_id||''}')" style="font-size:11px;padding:3px 9px">View draft →</button></td>
-</tr>`).join('') : `<tr><td colspan="8" style="text-align:center;color:var(--tx2);padding:20px">No SARs filed yet — create a case and file from Case Management</td></tr>`}
-</tbody></table></div>
-<div class="card"><div class="ch"><span class="ct">Generate SAR from case</span></div><div class="cb">
-  <div style="font-size:12px;color:var(--tx2);margin-bottom:12px;line-height:1.6">Select a case to auto-generate a FinCEN Form 111 draft with narrative, subject information, and filing checklist.</div>
-  <select id="sar-case-select" style="width:100%;margin-bottom:10px">
-    <option value="">Select case...</option>
-    ${(await api('/api/cases')||{cases:[]}).cases.filter(c=>c.status!=='filed').map(c=>`<option value="${c.id}">${c.id} — ${c.entity} (${c.priority})</option>`).join('')}
-  </select>
-  <button class="btn primary" onclick="generateSARFromSelect()" style="width:100%">Generate SAR draft →</button>
-</div></div>
-</div>
-<div class="card" id="sar-preview" style="display:none"></div>`;
+  // Step state
+  window._sarStep = window._sarStep || 1;
+  window._sarForm = window._sarForm || {};
+  window._sarDocs = window._sarDocs || [];
+
+  var container = document.createElement('div');
+
+  // ── Step indicator ─────────────────────────────────────────────────────────
+  var stepBar = '<div style="display:flex;align-items:center;gap:0;margin-bottom:20px">';
+  var steps = ['Case Details','Generate Narrative','Supporting Docs','Submit to Supervisor'];
+  steps.forEach(function(s, i) {
+    var n = i + 1;
+    var active = n === window._sarStep;
+    var done   = n < window._sarStep;
+    var color  = done ? '#1EA064' : active ? 'var(--accent)' : 'var(--tx2)';
+    stepBar += '<div style="display:flex;align-items:center;gap:0">'
+      + '<div style="display:flex;flex-direction:column;align-items:center;gap:4px">'
+      + '<div style="width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;background:' + (active||done?color:'var(--bg2)') + ';color:' + (active||done?'#fff':color) + ';border:2px solid ' + color + '">' + (done?'&#10003;':n) + '</div>'
+      + '<div style="font-size:10px;color:' + color + ';font-weight:' + (active?'600':'400') + ';white-space:nowrap">' + s + '</div>'
+      + '</div>'
+      + (i < 3 ? '<div style="height:2px;width:60px;background:' + (done?'#1EA064':'var(--bdr)') + ';margin:0 4px;margin-bottom:14px"></div>' : '')
+      + '</div>';
+  });
+  stepBar += '</div>';
+
+  container.innerHTML = stepBar;
+
+  var card = document.createElement('div');
+  card.className = 'card';
+  container.appendChild(card);
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  if (window._sarStep === 1) {
+  // STEP 1: Case Details Form
+    card.innerHTML = '<div class="ch"><span class="ct">SAR Editor</span>'
+      + '<span style="font-size:12px;color:var(--tx2);margin-left:8px">&#183; Draft a SAR for cases outside the monitoring system</span></div>'
+      + '<div class="cb">'
+      + '<div style="font-size:12px;color:var(--tx2);background:rgba(30,80,180,0.08);border:1px solid rgba(30,80,180,0.2);border-radius:8px;padding:10px 14px;margin-bottom:18px">'
+      + '&#128274; This SAR draft will be submitted to the Supervisor Queue for review and FinCEN filing. Complete all required fields marked with *.'
+      + '</div>'
+      + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">'
+      + fld('entity_name',   'Subject / Entity Name *',          'text',   'e.g. Pacific Bridge LLC',       window._sarForm.entity_name||'')
+      + fld('entity_type',   'Entity Type *',                    'select', ['Individual','Business','Trust','Other'], window._sarForm.entity_type||'Business')
+      + fld('address',       'Address',                          'text',   'Street, City, State, ZIP',      window._sarForm.address||'')
+      + fld('ein_dob',       'EIN / SSN / DOB',                  'text',   'Tax ID or date of birth',       window._sarForm.ein_dob||'')
+      + fld('account_no',    'Account Number(s)',                 'text',   'Comma-separated if multiple',   window._sarForm.account_no||'')
+      + fld('typology',      'Suspicious Activity Type *',       'select', ['Structuring','Structuring / threshold evasion','Layering','Shell Company','Smurfing','Sanctions','Crypto/Virtual Assets','Trade-Based AML','Fraud/Cybercrime','Other'], window._sarForm.typology||'Structuring')
+      + fld('amount',        'Total Transaction Amount ($) *',   'text',   'e.g. 85000',                    window._sarForm.amount||'')
+      + fld('date_range',    'Activity Date Range *',            'text',   'e.g. 01 Jan 2026 - 31 Mar 2026',window._sarForm.date_range||'')
+      + fld('channels',      'Transaction Channels',             'text',   'e.g. Wire Transfer, Cash Deposit', window._sarForm.channels||'')
+      + fld('filing_officer','Filing Officer *',                  'text',   'Your name',                     window._sarForm.filing_officer||(window._currentUser&&window._currentUser.name)||'')
+      + '</div>'
+      + '<div style="margin-top:14px"><label style="font-size:11px;color:var(--tx2);display:block;margin-bottom:6px;font-weight:500">Description of Suspicious Activity *</label>'
+      + '<textarea id="sar_description" style="width:100%;min-height:120px;background:var(--bg2);color:var(--tx1);border:1px solid var(--bdr);border-radius:6px;padding:10px;font-size:12px;box-sizing:border-box;resize:vertical" placeholder="Describe the suspicious activity in detail: what happened, who was involved, why it is suspicious, what investigation steps were taken...">' + (window._sarForm.description||'') + '</textarea>'
+      + '</div>'
+      + '<div style="margin-top:16px;display:flex;gap:8px;justify-content:flex-end">'
+      + '<button class="btn primary" id="sarStep1Btn" style="padding:8px 20px">Generate SAR Narrative &#8594;</button>'
+      + '</div></div>';
+
+    // Wire step 1 next button
+    document.getElementById('content').innerHTML = '';
+    document.getElementById('content').appendChild(container);
+
+    document.getElementById('sarStep1Btn').onclick = function() {
+      // Collect form values
+      ['entity_name','entity_type','address','ein_dob','account_no','typology','amount','date_range','channels','filing_officer'].forEach(function(f2) {
+        var el = document.getElementById('sar_'+f2);
+        if (el) window._sarForm[f2] = el.value;
+      });
+      var desc = document.getElementById('sar_description');
+      if (desc) window._sarForm.description = desc.value;
+
+      // Validate required fields
+      var missing = [];
+      if (!window._sarForm.entity_name) missing.push('Entity Name');
+      if (!window._sarForm.typology)    missing.push('Suspicious Activity Type');
+      if (!window._sarForm.amount)      missing.push('Amount');
+      if (!window._sarForm.date_range)  missing.push('Date Range');
+      if (!window._sarForm.filing_officer) missing.push('Filing Officer');
+      if (!window._sarForm.description || window._sarForm.description.length < 20) missing.push('Activity Description (min 20 chars)');
+      if (missing.length) { toast('Please complete: ' + missing.join(', '), 'error'); return; }
+
+      window._sarStep = 2;
+      sarWorkbench();
+    };
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  } else if (window._sarStep === 2) {
+  // STEP 2: Generate & Edit FinCEN Narrative
+    var f = window._sarForm;
+    var narrative = buildSARNarrative(f);
+    window._sarNarrative = window._sarNarrative || narrative;
+
+    card.innerHTML = '<div class="ch" style="align-items:center"><span class="ct">SAR Narrative</span>'
+      + '<span style="font-size:11px;color:var(--tx2);margin-left:8px">&#183; FinCEN Form 111 compliant &#183; Edit before submitting</span>'
+      + '<button class="btn" id="sarRegenBtn" style="margin-left:auto;font-size:11px;padding:3px 10px">&#8635; Regenerate</button>'
+      + '</div><div class="cb">'
+      + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;font-size:12px">'
+      + '<div><span style="color:var(--tx2)">Entity:</span> <strong>' + f.entity_name + '</strong></div>'
+      + '<div><span style="color:var(--tx2)">Typology:</span> <strong>' + f.typology + '</strong></div>'
+      + '<div><span style="color:var(--tx2)">Amount:</span> <strong>$' + parseFloat(f.amount||0).toLocaleString() + '</strong></div>'
+      + '<div><span style="color:var(--tx2)">Period:</span> <strong>' + f.date_range + '</strong></div>'
+      + '</div>'
+      + '<div style="background:rgba(30,164,100,0.06);border:1px solid rgba(30,164,100,0.15);border-radius:6px;padding:8px 12px;margin-bottom:12px;font-size:11px;color:#1EA064">'
+      + '&#10003; FinCEN SAR (Form 111) narrative generated. Review and edit below before proceeding.'
+      + '</div>'
+      + '<textarea id="sarNarrativeEdit" style="width:100%;min-height:340px;background:var(--bg2);color:var(--tx1);border:1px solid #1E50B4;border-radius:6px;padding:14px;font-size:11.5px;line-height:1.8;resize:vertical;box-sizing:border-box;font-family:Calibri,sans-serif"></textarea>'
+      + '<div style="margin-top:4px;font-size:11px;color:var(--tx2)">Characters: <span id="sarNarLen">0</span></div>'
+      + '<div style="margin-top:16px;display:flex;gap:8px;justify-content:flex-end">'
+      + '<button class="btn" id="sarBackBtn">&#8592; Back</button>'
+      + '<button class="btn primary" id="sarStep2Btn">Attach Documents &#8594;</button>'
+      + '</div></div>';
+
+    document.getElementById('content').innerHTML = '';
+    document.getElementById('content').appendChild(container);
+
+    var narTextarea = document.getElementById('sarNarrativeEdit');
+    var narLen = document.getElementById('sarNarLen');
+    narTextarea.value = window._sarNarrative;
+    narLen.textContent = narTextarea.value.length;
+    narTextarea.oninput = function() {
+      window._sarNarrative = narTextarea.value;
+      narLen.textContent = narTextarea.value.length;
+    };
+
+    document.getElementById('sarRegenBtn').onclick = function() {
+      window._sarNarrative = buildSARNarrative(window._sarForm);
+      narTextarea.value = window._sarNarrative;
+      narLen.textContent = narTextarea.value.length;
+      toast('Narrative regenerated');
+    };
+    document.getElementById('sarBackBtn').onclick = function() { window._sarStep = 1; sarWorkbench(); };
+    document.getElementById('sarStep2Btn').onclick = function() {
+      window._sarNarrative = narTextarea.value;
+      window._sarStep = 3; sarWorkbench();
+    };
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  } else if (window._sarStep === 3) {
+  // STEP 3: Supporting Documents
+    var docs = window._sarDocs || [];
+    var docRows = docs.length
+      ? docs.map(function(d) {
+          return '<div style="display:flex;align-items:center;gap:8px;background:var(--bg2);border:1px solid var(--bdr);border-radius:6px;padding:8px 12px;margin-bottom:6px;font-size:12px">'
+            + '&#128196; <span style="flex:1;font-weight:500">' + d.name + '</span>'
+            + '<span style="color:var(--tx2);font-size:11px">' + (d.size/1024).toFixed(1) + ' KB</span>'
+            + '<button class="btn" data-remove-doc="' + d.name + '" style="font-size:10px;padding:2px 7px;color:#E24B4A;border-color:rgba(226,75,74,0.3)">&#10005;</button>'
+            + '</div>';
+        }).join('')
+      : '<div style="font-size:12px;color:var(--tx2);padding:8px 0">No documents attached. You can proceed without attachments.</div>';
+
+    card.innerHTML = '<div class="ch"><span class="ct">Supporting Documents</span>'
+      + '<span style="font-size:11px;color:var(--tx2);margin-left:8px">&#183; Attach evidence, transaction records, correspondence</span></div>'
+      + '<div class="cb">'
+      + '<div id="sarDocList" style="margin-bottom:14px">' + docRows + '</div>'
+      + '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:20px">'
+      + '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;background:var(--bg2);border:1px dashed var(--bdr);border-radius:8px;padding:10px 16px;font-size:12px;color:var(--tx2)" id="sarDocLabel">'
+      + '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="width:16px;height:16px"><path d="M8 1v10M4 5l4-4 4 4"/><path d="M2 11v2a1 1 0 001 1h10a1 1 0 001-1v-2"/></svg>'
+      + '<span id="sarDocLabelTxt">Choose file (PDF, DOCX, PNG, JPG, XLSX)</span>'
+      + '<input type="file" id="sarDocFile" accept=".pdf,.docx,.doc,.png,.jpg,.jpeg,.xlsx,.csv" style="display:none"></label>'
+      + '<button class="btn" id="sarAddDocBtn" disabled style="font-size:12px">&#43; Add File</button>'
+      + '</div>'
+      + '<div style="margin-top:16px;display:flex;gap:8px;justify-content:flex-end">'
+      + '<button class="btn" id="sarBack2Btn">&#8592; Back</button>'
+      + '<button class="btn primary" id="sarStep3Btn">Review &#38; Submit &#8594;</button>'
+      + '</div></div>';
+
+    document.getElementById('content').innerHTML = '';
+    document.getElementById('content').appendChild(container);
+
+    var sarDocFile = document.getElementById('sarDocFile');
+    var sarAddBtn  = document.getElementById('sarAddDocBtn');
+    var sarDocLbl  = document.getElementById('sarDocLabelTxt');
+
+    sarDocFile.onchange = function() {
+      if (sarDocFile.files && sarDocFile.files[0]) {
+        sarDocLbl.textContent = sarDocFile.files[0].name;
+        sarAddBtn.disabled = false;
+      }
+    };
+    sarAddBtn.onclick = function() {
+      if (!sarDocFile.files || !sarDocFile.files[0]) return;
+      var f2 = sarDocFile.files[0];
+      window._sarDocs.push({name: f2.name, size: f2.size, file: f2});
+      toast(f2.name + ' added');
+      sarDocFile.value = '';
+      sarDocLbl.textContent = 'Choose file (PDF, DOCX, PNG, JPG, XLSX)';
+      sarAddBtn.disabled = true;
+      window._sarStep = 3; sarWorkbench();
+    };
+    document.querySelectorAll('[data-remove-doc]').forEach(function(btn) {
+      btn.onclick = function() {
+        var name = btn.getAttribute('data-remove-doc');
+        window._sarDocs = window._sarDocs.filter(function(d){ return d.name !== name; });
+        window._sarStep = 3; sarWorkbench();
+      };
+    });
+    document.getElementById('sarBack2Btn').onclick = function() { window._sarStep = 2; sarWorkbench(); };
+    document.getElementById('sarStep3Btn').onclick = function() { window._sarStep = 4; sarWorkbench(); };
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  } else if (window._sarStep === 4) {
+  // STEP 4: Review & Submit
+    var f = window._sarForm;
+    var docs = window._sarDocs || [];
+
+    card.innerHTML = '<div class="ch"><span class="ct">Review &#38; Submit</span>'
+      + '<span style="font-size:11px;color:var(--tx2);margin-left:8px">&#183; Review all details before submitting to Supervisor Queue</span></div>'
+      + '<div class="cb">'
+      + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px">'
+      + sum('Entity', f.entity_name) + sum('Type', f.entity_type)
+      + sum('EIN / DOB', f.ein_dob||'—') + sum('Account No.', f.account_no||'—')
+      + sum('Typology', f.typology) + sum('Amount', '$'+parseFloat(f.amount||0).toLocaleString())
+      + sum('Date Range', f.date_range) + sum('Channels', f.channels||'—')
+      + sum('Filing Officer', f.filing_officer) + sum('Documents', docs.length + ' file(s) attached')
+      + '</div>'
+      + '<div style="margin-bottom:16px"><div style="font-size:11px;color:var(--tx2);font-weight:500;margin-bottom:6px">SAR NARRATIVE PREVIEW</div>'
+      + '<div style="font-size:11px;color:var(--tx2);background:var(--bg2);padding:12px;border-radius:6px;border-left:3px solid #1E50B4;max-height:160px;overflow-y:auto;white-space:pre-wrap;line-height:1.6" id="sarPreviewText"></div></div>'
+      + '<div style="background:rgba(231,126,34,0.08);border:1px solid rgba(231,126,34,0.2);border-radius:8px;padding:12px;font-size:12px;color:#E67E22;margin-bottom:16px">'
+      + '&#9888; Once submitted, this SAR draft will appear in the Supervisor Queue tagged as Manual SAR. The supervisor can review, edit, and file it with FinCEN.'
+      + '</div>'
+      + '<div style="display:flex;gap:8px;justify-content:flex-end">'
+      + '<button class="btn" id="sarBack3Btn">&#8592; Back</button>'
+      + '<button class="btn" id="sarResetBtn" style="color:#E24B4A;border-color:rgba(226,75,74,0.3)">&#10005; Start Over</button>'
+      + '<button class="btn primary" id="sarSubmitBtn" style="padding:8px 22px">&#9650; Submit to Supervisor Queue</button>'
+      + '</div></div>';
+
+    document.getElementById('content').innerHTML = '';
+    document.getElementById('content').appendChild(container);
+
+    var prev = document.getElementById('sarPreviewText');
+    if (prev) prev.textContent = window._sarNarrative;
+
+    document.getElementById('sarBack3Btn').onclick = function() { window._sarStep = 3; sarWorkbench(); };
+    document.getElementById('sarResetBtn').onclick = function() {
+      if (!confirm('Reset and start a new SAR draft? All current data will be lost.')) return;
+      window._sarStep = 1; window._sarForm = {}; window._sarDocs = []; window._sarNarrative = '';
+      sarWorkbench();
+    };
+    document.getElementById('sarSubmitBtn').onclick = async function() {
+      var btn = document.getElementById('sarSubmitBtn');
+      btn.disabled = true; btn.textContent = 'Submitting...';
+      var f2 = window._sarForm;
+      var officer = f2.filing_officer || (window._currentUser&&window._currentUser.name) || 'Officer';
+      var r = await api('/api/sar/manual_submit', {method:'POST', body: JSON.stringify({
+        officer:      officer,
+        entity_name:  f2.entity_name,
+        entity_type:  f2.entity_type,
+        address:      f2.address||'',
+        ein_dob:      f2.ein_dob||'',
+        account_no:   f2.account_no||'',
+        typology:     f2.typology,
+        amount:       parseFloat(f2.amount||0),
+        date_range:   f2.date_range,
+        channels:     f2.channels||'',
+        description:  f2.description||'',
+        narrative:    window._sarNarrative,
+      })});
+      if (r && r.ok) {
+        // Show success modal then reset
+        var successModal = document.createElement('div');
+        successModal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:999;display:flex;align-items:center;justify-content:center';
+        successModal.innerHTML = '<div style="background:var(--bg1);border-radius:12px;padding:32px;width:420px;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.5)">'
+          + '<div style="font-size:48px;margin-bottom:12px">&#10003;</div>'
+          + '<div style="font-size:18px;font-weight:700;color:#1EA064;margin-bottom:8px">SAR Submitted Successfully</div>'
+          + '<div style="font-size:13px;color:var(--tx2);margin-bottom:6px">Case ID: <strong style="color:var(--tx1);font-family:monospace">' + r.case_id + '</strong></div>'
+          + '<div style="font-size:12px;color:var(--tx2);margin-bottom:20px">Your manual SAR draft has been sent to the Supervisor Queue and tagged as <strong>Manual SAR</strong>. The supervisor can review, edit, and file it with FinCEN.</div>'
+          + '<button class="btn primary" id="sarSuccessBtn" style="padding:8px 24px">Go to Supervisor Queue</button>'
+          + '</div>';
+        document.body.appendChild(successModal);
+        // Reset form state
+        window._sarStep = 1; window._sarForm = {}; window._sarDocs = []; window._sarNarrative = '';
+        document.getElementById('sarSuccessBtn').onclick = function() {
+          successModal.remove();
+          window.go('supqueue');
+        };
+      } else {
+        toast('Submission failed', 'error');
+        btn.disabled = false; btn.innerHTML = '&#9650; Submit to Supervisor Queue';
+      }
+    };
+  }
+}
+
+// ── SAR form field helper ─────────────────────────────────────────────────────
+function fld(id, label, type, placeholder, val) {
+  var sel = type === 'select';
+  var opts = sel ? placeholder : null;
+  var inner = sel
+    ? '<select id="sar_' + id + '" style="width:100%;background:var(--bg2);color:var(--tx1);border:1px solid var(--bdr);border-radius:6px;padding:8px 10px;font-size:12px">'
+      + (Array.isArray(opts) ? opts.map(function(o){ return '<option value="'+o+'"'+(o===val?' selected':'')+'>'+o+'</option>'; }).join('') : '')
+      + '</select>'
+    : '<input id="sar_' + id + '" type="text" value="' + (val||'').replace(/"/g,'&quot;') + '" placeholder="' + placeholder + '" style="width:100%;background:var(--bg2);color:var(--tx1);border:1px solid var(--bdr);border-radius:6px;padding:8px 10px;font-size:12px;box-sizing:border-box">';
+  return '<div><label style="font-size:11px;color:var(--tx2);display:block;margin-bottom:4px;font-weight:500">' + label + '</label>' + inner + '</div>';
+}
+
+// ── SAR summary row helper ────────────────────────────────────────────────────
+function sum(label, val) {
+  return '<div style="background:var(--bg2);border-radius:6px;padding:10px 12px">'
+    + '<div style="font-size:10px;color:var(--tx2);font-weight:500;margin-bottom:2px">' + label.toUpperCase() + '</div>'
+    + '<div style="font-size:13px;font-weight:500">' + (val||'—') + '</div>'
+    + '</div>';
+}
+
+// ── FinCEN SAR narrative generator for SAR Editor ─────────────────────────────
+function buildSARNarrative(f) {
+  var entity   = f.entity_name    || 'Unknown Entity';
+  var eType    = f.entity_type    || 'Business';
+  var typo     = f.typology       || 'Suspicious Activity';
+  var amount   = parseFloat(f.amount||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  var period   = f.date_range     || 'Unknown period';
+  var channels = f.channels       || 'Unknown channels';
+  var officer  = f.filing_officer || (window._currentUser&&window._currentUser.name) || 'Officer';
+  var address  = f.address        || 'Address not disclosed';
+  var ein      = f.ein_dob        || 'Not provided';
+  var acct     = f.account_no     || 'Not disclosed';
+  var desc     = f.description    || 'No description provided.';
+  var today    = new Date().toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'});
+
+  var actDesc = {
+    'Structuring': 'The subject conducted multiple cash transactions deliberately structured below the $10,000 CTR filing threshold under 31 U.S.C. sec. 5313. The pattern constitutes a federal offense under 31 U.S.C. sec. 5324(a) — structuring to evade reporting requirements is prohibited regardless of whether underlying funds are legitimate.',
+    'Structuring / threshold evasion': 'Multiple transactions appear deliberately structured below the $10,000 CTR threshold across different branches and time windows. This constitutes structuring under 31 U.S.C. sec. 5324(a). The institution has a duty to file this SAR under 31 C.F.R. sec. 1020.320(a)(2) regardless of whether the funds are from a legitimate source.',
+    'Layering': 'The subject engaged in rapid, complex fund movements through multiple accounts and jurisdictions with no apparent legitimate commercial purpose, consistent with the layering phase of money laundering. Funds were transferred in quick succession to obscure their origin, consistent with FATF typologies on layering through financial institutions.',
+    'Shell Company': 'Activity is consistent with use of a shell company or nominee structure to obscure beneficial ownership. The entity exhibits characteristics of nominee control including transaction volumes disproportionate to disclosed business purpose and high counterparty network density. See also FinCEN guidance FIN-2006-G014 on shell companies.',
+    'Smurfing': 'Multiple sub-threshold cash deposits were identified within a compressed time window, consistent with a coordinated smurfing operation in which illicit cash is placed into the financial system through multiple smaller transactions to circumvent CTR reporting under 31 C.F.R. sec. 1010.311.',
+    'Sanctions': 'Transaction activity indicates potential exposure to OFAC-designated entities or sanctioned jurisdictions. This institution is required to block or reject such transactions and file a report under 31 C.F.R. Part 501. Potential SDN-list exposure identified across the reporting period.',
+    'Crypto/Virtual Assets': 'The subject engaged in rapid conversion between fiat currency and virtual assets with no discernible commercial purpose, consistent with crypto-based layering. Activity falls under FinCEN guidance FIN-2013-G001 and FIN-2019-G001 which extend BSA obligations to transactions involving virtual asset service providers.',
+    'Trade-Based AML': 'Indicators of trade-based money laundering (TBML) detected, including possible over/under-invoicing patterns and payment flows inconsistent with stated trade relationships. See FATF guidance on TBML (June 2006) and FinCEN advisory FIN-2014-A005 on trade finance.',
+    'Fraud/Cybercrime': 'Transaction patterns consistent with proceeds of fraud or cybercrime. Indicators include rapid outbound wire transfers following large inbound credits from unknown counterparties, consistent with money mule activity as described in FinCEN Advisory FIN-2019-A005 on business email compromise.',
+  };
+  var actParagraph = actDesc[typo] || 'The subject exhibited anomalous financial activity inconsistent with established baseline behaviour. The activity pattern is suspicious and warrants SAR filing under 31 U.S.C. sec. 5318(g) and 31 C.F.R. sec. 1020.320.';
+
+  return [
+    'FinCEN SAR NARRATIVE - MANUAL SUBMISSION',
+    'Filing Institution: First National Compliance Bank (FNCB) | BSA/AML Compliance',
+    'Prepared by: ' + officer + ' | Date: ' + today,
+    'Classification: SUSPICIOUS ACTIVITY REPORT - STRICTLY CONFIDENTIAL',
+    '================================================================',
+    '',
+    'PART I - SUBJECT INFORMATION',
+    'Subject name:    ' + entity,
+    'Entity type:     ' + eType,
+    'Address:         ' + address,
+    'EIN / SSN / DOB: ' + ein,
+    'Account no(s):   ' + acct,
+    'Activity period: ' + period,
+    'Channels:        ' + channels,
+    'Aggregate amount flagged: $' + amount,
+    '',
+    'PART II - SUSPICIOUS ACTIVITY DESCRIPTION',
+    'Typology: ' + typo,
+    '',
+    actParagraph,
+    '',
+    'PART III - DETAILED ACTIVITY NARRATIVE',
+    'Based on internal review and investigation by ' + officer + ' of FNCB BSA/AML Compliance,',
+    'the following suspicious activity has been identified:',
+    '',
+    desc,
+    '',
+    'The above activity was identified during the period ' + period + ' and involves',
+    'approximately $' + amount + ' in transactions conducted via ' + channels + '.',
+    '',
+    'PART IV - FinCEN CHECKLIST COMPLIANCE',
+    '[X] Amount involved is quantified to the best of the filer\'s knowledge',
+    '[X] Subject identification information included where available',
+    '[X] Narrative describes the suspicious activity in sufficient detail',
+    '[X] Law enforcement contact information available upon request',
+    '[X] 5-year document retention initiated per 31 C.F.R. sec. 1010.430',
+    '[X] SAR filed within required timeframe per 31 C.F.R. sec. 1020.320',
+    '',
+    'PART V - FILING INSTITUTION',
+    'Institution: First National Compliance Bank (FNCB)',
+    'BSA Officer: Ransford Adjapong | r.adjapong@fncb.com',
+    'Authority: 31 U.S.C. sec. 5318(g) | 31 C.F.R. sec. 1020.320',
+    '',
+    'NOTE: This SAR is confidential per 31 U.S.C. sec. 5318(g)(2).',
+    'Tipping off the subject of this report is prohibited.',
+  ].join('\n');
 }
 
 async function generateSARFromSelect() {
@@ -3593,6 +4710,111 @@ async function ruleEngine() {
 // Register page
 // Router override 3 removed — unified router at bottom of page
 
+// ── Case History Page ────────────────────────────────────────────────────────
+async function caseHistory() {
+  const data = await api("/api/case_history") || {};
+  const cases = data.cases || [];
+
+  var container = document.createElement("div");
+
+  // Metrics
+  var metricsHtml = '<div class="mrow" style="margin-bottom:18px">'
+    + '<div class="mc"><div class="ml">Total cleared</div><div class="mv">' + cases.length + '</div><div class="md">All time</div></div>'
+    + '<div class="mc"><div class="ml">This month</div><div class="mv">'
+    + cases.filter(function(c){ return c.cleared_at && new Date(c.cleared_at).getMonth() === new Date().getMonth(); }).length
+    + '</div><div class="md">Cleared cases</div></div>'
+    + '<div class="mc"><div class="ml">SAR-free closures</div><div class="mv" style="color:#1EA064">'
+    + cases.filter(function(c){ return c.sar_status !== "filed"; }).length
+    + '</div><div class="md">No SAR required</div></div>'
+    + '</div>';
+
+  var tableRows = "";
+  if (cases.length) {
+    cases.forEach(function(c) {
+      var clearedAt = c.cleared_at ? new Date(c.cleared_at).toLocaleString("en-GB",{day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"}) : "—";
+      var sc2 = (c.score||0)>=90?"#E24B4A":(c.score||0)>=70?"#E67E22":"#1EA064";
+      tableRows += '<tr style="border-bottom:1px solid var(--bdr);cursor:pointer" data-cleared-id="' + c.id + '">'
+        + '<td style="padding:10px 8px;font-family:monospace;font-size:11px">' + c.id + (c.manual_sar ? ' <span style="background:rgba(186,117,23,0.2);color:#E67E22;border:1px solid rgba(186,117,23,0.3);border-radius:10px;padding:1px 7px;font-size:10px;font-weight:600">Manual SAR</span>' : '') + '</td>'
+        + '<td style="padding:10px 8px;font-weight:500">' + (c.entity||"—") + '</td>'
+        + '<td style="padding:10px 8px"><span style="background:rgba(231,126,34,0.12);color:#E67E22;border-radius:4px;padding:2px 7px;font-size:11px">' + (c.typology||"—") + '</span></td>'
+        + '<td style="padding:10px 8px;font-weight:700;color:' + sc2 + '">' + (c.score||"—") + '</td>'
+        + '<td style="padding:10px 8px;font-size:12px">' + (c.officer||"—") + '</td>'
+        + '<td style="padding:10px 8px;font-size:12px">' + (c.cleared_by||"—") + '</td>'
+        + '<td style="padding:10px 8px;font-size:11px;color:var(--tx2)">' + clearedAt + '</td>'
+        + '<td style="padding:10px 8px;font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis;color:var(--tx2)">' + (c.clear_reason||"—") + '</td>'
+        + '<td style="padding:10px 8px"><button class="btn" style="font-size:11px;padding:3px 9px" data-view-cleared="' + c.id + '">View</button></td>'
+        + '</tr>';
+    });
+  } else {
+    tableRows = '<tr><td colspan="9" style="padding:40px;text-align:center;color:var(--tx2);font-size:13px">No cleared cases yet. Cases cleared via the Clear Case button will appear here.</td></tr>';
+  }
+
+  var card = document.createElement("div");
+  card.className = "card";
+  card.innerHTML = '<div class="ch"><span class="ct">Case History</span>'
+    + '<span style="font-size:11px;color:var(--tx2);margin-left:8px">\xb7 All cleared cases \xb7 Permanent record</span></div>'
+    + '<div class="cb" style="padding:0;overflow-x:auto">'
+    + '<table style="width:100%;border-collapse:collapse;min-width:900px">'
+    + '<thead><tr style="border-bottom:1px solid var(--bdr)">'
+    + '<th style="padding:8px;text-align:left;font-size:11px;color:var(--tx2);font-weight:500">Case ID</th>'
+    + '<th style="padding:8px;text-align:left;font-size:11px;color:var(--tx2);font-weight:500">Entity</th>'
+    + '<th style="padding:8px;text-align:left;font-size:11px;color:var(--tx2);font-weight:500">Typology</th>'
+    + '<th style="padding:8px;text-align:left;font-size:11px;color:var(--tx2);font-weight:500">Score</th>'
+    + '<th style="padding:8px;text-align:left;font-size:11px;color:var(--tx2);font-weight:500">Officer</th>'
+    + '<th style="padding:8px;text-align:left;font-size:11px;color:var(--tx2);font-weight:500">Cleared by</th>'
+    + '<th style="padding:8px;text-align:left;font-size:11px;color:var(--tx2);font-weight:500">Date cleared</th>'
+    + '<th style="padding:8px;text-align:left;font-size:11px;color:var(--tx2);font-weight:500">Reason</th>'
+    + '<th style="padding:8px"></th>'
+    + '</tr></thead>'
+    + '<tbody>' + tableRows + '</tbody></table></div>';
+
+  container.innerHTML = metricsHtml;
+  container.appendChild(card);
+
+  var ct = document.getElementById("content");
+  ct.innerHTML = "";
+  ct.appendChild(container);
+
+  // View cleared case detail
+  document.querySelectorAll("[data-view-cleared]").forEach(function(btn) {
+    btn.onclick = function(e) {
+      e.stopPropagation();
+      var cid = btn.getAttribute("data-view-cleared");
+      var c = cases.find(function(x){ return x.id === cid; });
+      if (!c) return;
+      var clearedAt = c.cleared_at ? new Date(c.cleared_at).toLocaleString("en-GB",{day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"}) : "—";
+      var modal = document.createElement("div");
+      modal.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:999;display:flex;align-items:center;justify-content:center";
+      modal.innerHTML = '<div style="background:var(--bg1);border-radius:12px;padding:24px;width:520px;max-height:80vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.4)">'
+        + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">'
+        + '<div style="font-size:15px;font-weight:600">' + c.id + ' \u2014 Cleared Case</div>'
+        + '<button class="btn" onclick="this.closest(\'div[style*=fixed]\').remove()">Close</button>'
+        + '</div>'
+        + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">'
+        + '<div><div class="det-title">Entity</div><div style="font-size:13px;font-weight:500">' + (c.entity||"—") + '</div></div>'
+        + '<div><div class="det-title">Typology</div><div style="font-size:12px">' + (c.typology||"—") + '</div></div>'
+        + '<div><div class="det-title">Officer</div><div style="font-size:12px">' + (c.officer||"—") + '</div></div>'
+        + '<div><div class="det-title">Cleared by</div><div style="font-size:12px">' + (c.cleared_by||"—") + '</div></div>'
+        + '<div><div class="det-title">Date cleared</div><div style="font-size:12px">' + clearedAt + '</div></div>'
+        + '<div><div class="det-title">Reason</div><div style="font-size:12px;color:var(--tx2)">' + (c.clear_reason||"—") + '</div></div>'
+        + '</div>'
+        + '<div class="det-title" style="margin-bottom:6px">Investigation narrative</div>'
+        + '<div id="chNarText" style="font-size:11.5px;color:var(--tx2);line-height:1.7;background:var(--bg2);padding:12px;border-radius:6px;border-left:3px solid #5a5a56;max-height:200px;overflow-y:auto;white-space:pre-wrap"></div>'
+        + '</div>';
+      document.body.appendChild(modal);
+      var narEl = modal.querySelector("#chNarText");
+      if (narEl) narEl.textContent = c.narrative || "No narrative recorded.";
+      modal.onclick = function(ev){ if(ev.target===modal) modal.remove(); };
+    };
+  });
+
+  // Row hover
+  document.querySelectorAll("[data-cleared-id]").forEach(function(row) {
+    row.onmouseover = function(){ this.style.background = "var(--bg2)"; };
+    row.onmouseout  = function(){ this.style.background = ""; };
+  });
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // UNIFIED ROUTER — defined last so ALL page functions are available
 // ═══════════════════════════════════════════════════════════════════
@@ -3620,7 +4842,7 @@ window._goFinal = async function(page) {
     geographic:'Geographic Risk', reports:'Export Reports',
     users:'User Management', profile:'My Profile',
     rules:'Rule Engine', monitoring:'Model Monitoring',
-    supqueue:'Supervisor Queue', sar:'SAR Workbench',
+    supqueue:'Supervisor Queue', sar:'SAR Workbench', case_history:'Case History',
     'sar-editor':'SAR Editor', 'entity-graph':'Entity Graph',
     documents:'Documents', features:'Feature Engineering',
   };
@@ -3642,7 +4864,7 @@ window._goFinal = async function(page) {
     rules:'ruleEngine', monitoring:'monitoring', supqueue:'supqueue',
     sar:'sarWorkbench', 'sar-editor':'sarEditor',
     'entity-graph':'entityGraph', documents:'caseDocuments',
-    features:'featureDetail',
+    features:'featureDetail', case_history:'caseHistory',
   };
   var fnName = _map[page] || 'dashboard';
   var fn = window[fnName] || window.dashboard;
